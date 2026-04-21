@@ -4,361 +4,291 @@ Status: Draft
 Owner: PRD Agent
 
 ## Product Summary
-The MVP is a Telegram-first coupon discovery and partner distribution product for users in Israel. It helps users find verified fast-food and adjacent everyday savings offers through a lightweight bot or channel experience, with clear redemption instructions and minimal friction.
+The MVP is a Telegram-first coupon resale product for users in Israel. The business pre-buys coupon inventory, lists that inventory inside Telegram, accepts payment in ILS through an approved payment provider, and delivers the coupon to the user after successful payment.
 
-The MVP is intentionally designed to maximize learning while minimizing legal, platform, and operational risk. It will not begin as a direct coupon resale business. Instead, it will focus on compliant discovery, manual curation, partner-approved distribution, and referral-style monetization.
+This is intentionally a narrower MVP than a discovery marketplace. It is designed around one controlled loop:
+
+1. Hold inventory before sale
+2. Sell inventory in Telegram
+3. Take payment in ILS
+4. Deliver coupon immediately
 
 ## Problem Statement
-Israeli consumers looking for fast-food and similar everyday savings face a fragmented, low-trust experience. Deals are scattered across merchant apps, websites, promo channels, and social feeds. Many offers are expired, confusing, or difficult to redeem.
+Users who want discounted fast-food and similar coupons do not have a fast, simple way to buy a ready-to-use coupon inside Telegram. The current experience usually requires searching across multiple channels, validating whether the deal is still good, and figuring out how to redeem it.
 
-For Telegram-native users, there is no simple, trusted, localized way to receive a stream of verified offers that are easy to understand and quick to act on. The current market failure is not just lack of discovery, but lack of confidence that an offer is valid, relevant, and worth the effort.
+This MVP solves a smaller problem than full coupon discovery. It gives users a direct purchase path to pre-bought inventory that the seller already controls.
 
 ## Product Goals
-1. Validate that Israeli users want a Telegram-native coupon discovery experience.
-2. Prove that users prefer a smaller number of verified offers over a large volume of noisy promotions.
-3. Learn which categories, formats, and delivery patterns drive engagement and redemption intent.
-4. Establish a compliant, low-risk supply model that does not depend on restricted automation or unclear resale rights.
-5. Test early monetization through affiliate, sponsorship, or partner distribution without taking on direct commerce risk.
+1. Validate that Israeli Telegram users will buy pre-bought coupons directly in Telegram.
+2. Prove that a simple inventory-sale flow converts better than a broader discovery experience for the first wedge.
+3. Measure whether immediate post-payment coupon delivery creates a compelling user experience.
+4. Validate margin between coupon acquisition cost and resale price after payment fees.
+5. Operate with a small number of controlled coupon types and a small number of suppliers.
 
 ## Non-Goals
-- Direct resale of coupons in MVP
-- Managed inventory of ambiguous or non-transferable coupon assets
-- Automated scraping of protected merchant sites or apps
-- Captcha bypassing, anti-bot evasion, or restricted automation
-- A full standalone consumer mobile app
-- Broad category coverage before the core loop is proven
-- Complex merchant self-serve tooling
+- Building a broad coupon discovery network
+- Affiliate-first monetization
+- Sponsored placement marketplace
+- User-to-user coupon marketplace
+- Merchant self-serve tooling
+- Multi-country expansion
+- Any sourcing flow that depends on restricted automation, captcha bypassing, or anti-bot evasion
 
 ## Target Users
 
 ### Primary Users
-- Price-sensitive consumers in Israel who regularly buy fast food, food delivery, and other high-frequency consumer items
-- Telegram-native users who prefer a fast messaging experience over browsing multiple merchant websites or installing new apps
-- Deal seekers who value trust, simplicity, and relevance more than sheer offer volume
+- Telegram users in Israel who want a fast buy flow for discounted coupons
+- Price-sensitive users who value speed and convenience more than deep browsing
+- Users willing to buy a clearly defined coupon product with final-sale terms
 
 ### Secondary Users
-- Approved merchants, affiliate partners, and licensed distributors seeking a lightweight promotion channel
-- Small internal operators curating and verifying deals manually during MVP
+- Internal operators managing inventory, listings, payments, and delivery
+- Approved suppliers providing pre-bought coupon inventory
 
 ## User Pains
-- Finding worthwhile offers takes too much time
-- Many offers appear untrustworthy or expire before use
-- Redemption rules are often unclear
-- Users do not know which deals are relevant for Israel
-- Existing discovery channels are cluttered, inconsistent, or spammy
+- Buying discounted coupons is fragmented and inconvenient
+- Users cannot quickly tell which coupon is immediately usable
+- Searching for a coupon often takes too much effort
+- Users want a simple purchase and delivery experience inside Telegram
 
 ## Core Value Proposition
-Users receive a trusted stream of relevant, verified savings opportunities in Telegram, with:
-- no app install required
-- clear redemption instructions
-- localized offer context
-- fewer but higher-confidence offers
-- a safer operating model that prioritizes compliance and trust over risky scale
+Users can buy a pre-bought coupon in Telegram with:
+- a simple product listing
+- clear price in ILS
+- fast payment flow
+- immediate coupon delivery after successful payment
+- no need to search across multiple channels
 
 ## Assumptions
-- Telegram is a viable first distribution channel for at least one meaningful cohort of Israeli deal seekers.
-- Fast food is a strong entry category because value is easy to understand and purchase frequency is high.
-- Manual verification is acceptable in MVP if it meaningfully improves trust and reduces platform/legal risk.
-- Partner-approved and affiliate-compatible offers are sufficient to test demand before direct commerce is needed.
-- Users will return if the product is consistently useful and trustworthy, even if inventory breadth is limited.
+- The team can acquire coupon inventory before sale at a price that leaves margin after fees.
+- There are coupon types that can be lawfully held and resold with acceptable rights clarity.
+- Users will tolerate an all-sales-final model if the coupon, price, and delivery terms are explicit before payment.
+- A payment provider that accepts ILS can be integrated without excessive friction.
+- Inventory can be kept small enough that the team can verify each item before listing.
 
 ## User Journeys
 
-### Journey 1: User Joins and Receives First Value
-1. User discovers the Telegram bot or channel from a friend, community post, or partner promotion.
-2. User joins and sees a short explanation of what the product does and how offers are verified.
-3. User chooses categories of interest such as fast food, food delivery, or groceries.
-4. User immediately sees a small set of currently active offers with merchant name, value summary, expiry, and redemption instructions.
-5. User clicks through or saves an offer for later.
-
-Success condition:
-The user understands the product quickly and finds at least one relevant offer within the first session.
-
-### Journey 2: User Views an Offer and Decides Whether to Act
-1. User opens an offer in Telegram.
-2. User sees:
+### Journey 1: User Buys a Coupon
+1. User opens the Telegram bot.
+2. User sees a list of available coupons with merchant name, coupon value, sale price, and key terms.
+3. User selects a coupon listing.
+4. User sees:
    merchant name
-   offer summary
-   expiration date
-   key restrictions
-   source type such as partner, affiliate, or curated public offer
-   redemption path
-3. User either clicks through to the merchant or marks the offer as not relevant.
-4. User can send simple feedback such as "worked" or "didn't work."
+   coupon value
+   sale price in ILS
+   expiry
+   redemption instructions
+   explicit final-sale disclosure stating no refunds are available
+5. User chooses to buy.
+6. User is redirected to or shown the payment flow with a provider that accepts ILS.
+7. Payment succeeds.
+8. Coupon is delivered to the user in Telegram.
 
 Success condition:
-The user can evaluate the offer without confusion and understands exactly what action to take.
+The user completes payment and receives the coupon without manual intervention.
 
-### Journey 3: Operator Curates and Publishes a Verified Offer
-1. Internal operator reviews a potential offer from a compliant source.
-2. Operator verifies source, availability window, restrictions, and publishing rights.
-3. Operator enters standardized metadata into the admin workflow.
-4. Offer is published to the relevant Telegram audience.
-5. Operator monitors feedback and removes or updates the offer if quality drops.
-
-Success condition:
-The offer is published with consistent quality and can be removed quickly if it becomes stale or disputed.
-
-### Journey 4: User Reports a Bad Offer
-1. User marks an offer as invalid or misleading.
-2. The report enters a lightweight review queue.
-3. Operator checks the claim and either updates, pauses, or removes the offer.
-4. The user receives a brief acknowledgment if support follow-up is needed.
+### Journey 2: Operator Lists Inventory
+1. Operator acquires coupon inventory.
+2. Operator verifies validity, expiry, transferability, and sale price.
+3. Operator stores the coupon securely in admin.
+4. Operator creates a Telegram listing linked to available inventory.
+5. Listing becomes available for sale.
 
 Success condition:
-Bad offers are handled quickly enough to preserve trust.
+Only inventory that is actually held and verified is offered for sale.
+
+### Journey 3: User Has a Post-Purchase Problem
+1. User reports that a coupon is invalid or unclear.
+2. Operator reviews the case manually.
+3. Operator checks coupon record, source history, and delivery record.
+4. Operator responds to the user.
+
+Success condition:
+The team can investigate and document the issue even though the stated policy is that refunds are not available.
 
 ## MVP Features
 
-### 1. Telegram Delivery Surface
+### 1. Telegram Product Listing Flow
 Must have
 
 Description:
-- Telegram bot, channel, or a hybrid of both as the primary user surface
-- simple onboarding message
-- category selection or lightweight preference capture
+- list available coupons in Telegram
+- show price, value, expiry, and key terms
+- allow user to open detail view and buy
 
-Why included:
-- fastest path to testing demand in the intended channel
-- avoids the cost and complexity of a standalone app
-
-### 2. Curated Offer Feed
+### 2. Controlled Coupon Inventory
 Must have
 
 Description:
-- manually reviewed offers with consistent formatting
-- merchant name, offer summary, validity window, restrictions, and redemption instructions
-- support for a narrow initial category set, likely fast food first
+- pre-bought coupon inventory stored before sale
+- secure coupon storage
+- inventory count or availability tracking
 
-Why included:
-- this is the core product experience
-- supports learning around relevance, quality, and engagement
-
-### 3. Source and Disclosure Labels
+### 3. ILS Payment Flow
 Must have
 
 Description:
-- every offer is labeled by source type, such as affiliate, partner, sponsored, or curated public offer
-- copy makes clear when the product is not the merchant
+- payment provider integration that accepts ILS
+- successful payment confirmation before coupon delivery
+- payment status tracking
 
-Why included:
-- reduces legal, trust, and support risk
-- helps users understand the business model
-
-### 4. Manual Verification Workflow
+### 4. Coupon Delivery Flow
 Must have
 
 Description:
-- internal checklist before publication
-- verify source, expiry, key restrictions, and rights to distribute
-- manual review and removal process for stale or disputed offers
+- deliver coupon to user only after payment succeeds
+- store delivery timestamp and delivery evidence
 
-Why included:
-- high leverage for trust
-- critical for risk control in MVP
-
-### 5. Feedback Loop
+### 5. Admin Inventory Workflow
 Must have
 
 Description:
-- users can mark an offer as "worked" or "didn't work"
-- internal team can review reports and pause weak sources
+- create inventory entries
+- create listings
+- pause listings
+- mark inventory as sold, voided, expired, or disputed
 
-Why included:
-- creates fast learning on offer quality
-- helps manage freshness and trust
-
-### 6. Basic Offer Analytics
+### 6. Order and Payment Tracking
 Must have
 
 Description:
-- track joins, views, clicks, saves if supported, feedback rates, and invalid-offer reports
-- measure engagement by category and source type
+- record order creation, payment result, coupon assignment, and delivery state
 
-Why included:
-- needed to decide whether the MVP is working
-- enables monetization and roadmap decisions
-
-### 7. Lightweight Admin Operations
+### 7. Final-Sale Disclosure
 Must have
 
 Description:
-- ability to add, edit, pause, and expire offers
-- ability to log offer source and review status
-- simple review queue for reported issues
+- explicit statement before payment that all sales are final
+- explicit statement that no refunds are available
 
-Why included:
-- supports manual-first operations without overbuilding
-
-### 8. Support and Takedown Flow
+### 8. Support Logging
 Must have
 
 Description:
-- simple support contact path
-- process for removing invalid or disputed offers quickly
-
-Why included:
-- protects user trust and reduces platform risk
+- allow operators to log complaints, failures, and delivery issues even if no refund path exists
 
 ## Features Explicitly Excluded from MVP
-- Direct sale or resale of coupons to end users
-- Checkout or payment-taking flow for ambiguous inventory
-- Wallet balances, stored value, or internal credits
-- User-to-user coupon marketplace
-- User-uploaded coupon listings published without review
-- Automated collection from protected merchant websites or apps
-- Browser automation against checkout or account systems
-- Merchant dashboard with self-serve campaign creation
-- Multi-country expansion
-- Broad inventory across many categories before fast-food and adjacent categories are validated
+- Broad coupon discovery feed
+- Category preference engine
+- Affiliate click-out monetization
+- Sponsored listing marketplace
+- User-submitted coupon marketplace
+- Automated sourcing from protected merchant systems
+- Wallets or stored balance
+- Partial refunds, refunds on demand, or automated refund tooling
 
 ## Legal / Platform Risk Review
-The MVP is shaped specifically to remove or defer the highest-risk elements identified in `docs/legal/risk_analysis.md`.
+This MVP intentionally accepts a riskier commerce posture than the previous discovery-first version. The main risk concentrations are:
+- direct resale rights and transferability
+- payment disputes and chargebacks
+- user trust damage when a delivered coupon fails
+- legal and consumer-risk exposure from a no-refund policy
 
-High-risk ideas removed from MVP:
-- direct resale of coupons without explicit transferability rights
-- accepting user payments for coupon inventory with uncertain redemption rights
-- scraping or automation against merchant systems
-- presenting the product as merchant-authorized when it is not
-
-Risk controls included in MVP:
-- manual verification before publishing
-- explicit source and disclosure labels
-- narrow category scope
-- lightweight support and takedown process
-- partner, affiliate, or manually curated public-offer sourcing only
-
-Phase-gated for later consideration only:
-- managed inventory
-- resale margins
-- direct payments
-- deeper supplier integrations
+Required controls:
+- only sell inventory already in hand
+- verify transferability before listing
+- disclose the business role clearly
+- disclose final-sale / no-refund terms clearly before payment
+- keep audit records of inventory acquisition, payment, delivery, and support complaints
 
 ## Safer Alternatives Considered
 
-### Risky Idea: Direct Coupon Resale
-Why risky:
-- transferability may be prohibited
-- refund and chargeback exposure is high
-- supplier rights may be unclear
+### Safer Alternative: Discovery and Click-Out Model
+Why safer:
+- no inventory holding
+- no direct payment risk
+- lower refund and chargeback exposure
 
-Safer replacement:
-- discovery and click-out model using partner-approved, affiliate, or public verified offers
+Why not chosen for this MVP:
+- the goal is now to test direct Telegram sales with controlled inventory
 
-### Risky Idea: Automated Offer Extraction from Merchant Systems
-Why risky:
-- likely ToS and platform risk
-- brittle and operationally fragile
+### Safer Alternative: Partner Distribution Without Resale
+Why safer:
+- fewer transferability and resale-rights issues
 
-Safer replacement:
-- manual curation
-- approved feeds
-- direct partner submissions
-
-### Risky Idea: Open Marketplace for User-Submitted Coupons
-Why risky:
-- high fraud exposure
-- unclear rights and provenance
-- heavy support burden
-
-Safer replacement:
-- curated intake only, with manual review and no public listing by default
-
-### Risky Idea: Direct Consumer Payments in MVP
-Why risky:
-- adds payment, refund, and chargeback risk before product trust is proven
-
-Safer replacement:
-- monetization through affiliate, sponsorship, and partner distribution first
+Why not chosen for this MVP:
+- it introduces more dependency on partners and less control over product experience
 
 ## Monetization Approach
-The MVP monetization strategy should favor lower-risk, low-ops models:
+The MVP monetization model is direct resale margin:
 
-1. Affiliate or referral revenue
-Description:
-- users click through to partner or merchant flows
-- revenue is generated from tracked referrals where permitted
+1. Buy coupon inventory at cost
+2. List coupon inventory at resale price
+3. Collect payment in ILS
+4. Deliver coupon
+5. Keep the spread after fees and losses
 
-Why first:
-- lowest operational burden
-- no need to own redemption or payment flow
+Core economic variables:
+- inventory acquisition cost
+- payment provider fee
+- invalid inventory loss
+- support overhead
+- resale price
 
-2. Sponsored placements from approved merchants or distributors
-Description:
-- merchants pay for featured placement or campaign visibility
+## Refund Policy
+The MVP policy is explicit:
+- all sales are final
+- no refunds are available
 
-Why second:
-- aligned with the distribution model
-- easier to operate than resale
+This policy must be shown before payment, not after delivery.
 
-3. Partner distribution fees or lead-generation fees
-Description:
-- approved partners pay for qualified traffic or campaign delivery
-
-Why third:
-- still lower risk than direct commerce
-- creates a bridge toward stronger merchant relationships
-
-Explicitly not in MVP monetization:
-- resale margin on ambiguous coupon inventory
-- payment-taking consumer checkout for unverified digital goods
+Even with this policy, the system still needs internal support handling for:
+- invalid coupon complaints
+- wrong delivery
+- duplicate charge investigation
+- fraud review
 
 ## Success Metrics
 
-### User Value Metrics
-- percentage of new users who view at least one offer in their first session
-- click-through rate from offer view to merchant destination
-- repeat engagement within 7 days
-- percentage of offers receiving positive "worked" feedback
+### Conversion Metrics
+- listing view to purchase rate
+- payment completion rate
+- delivered order rate
+
+### Unit Economics Metrics
+- gross margin per coupon sold
+- payment fee rate
+- invalid inventory loss rate
+
+### Reliability Metrics
+- successful delivery rate
+- post-purchase complaint rate
+- coupon failure rate
 
 ### Trust Metrics
-- invalid-offer report rate
-- average time to remove or update a disputed offer
-- support contacts per 100 active users
-- share of published offers with complete source and expiry metadata
-
-### Supply Metrics
-- number of active compliant supply sources
-- supplier concentration ratio
-- percentage of offers published through approved channels
-- offer freshness rate
-
-### Monetization Metrics
-- affiliate revenue per active user
-- sponsor revenue per campaign
-- conversion by source type
-- share of revenue from compliant, repeatable channels
+- repeat buyer rate
+- complaint rate per 100 orders
+- chargeback or payment dispute rate
 
 ## MVP Success Criteria
-The MVP should be considered successful if it demonstrates the following:
+The MVP should be considered successful if it demonstrates:
 
-1. Users consistently engage with Telegram-delivered offers and a meaningful share return within 7 days.
-2. Offer quality remains high enough that invalid-offer reports stay low and trust does not erode.
-3. The team can operate the system manually without excessive support burden.
-4. At least one lower-risk monetization path shows early revenue potential.
-5. The product learns which categories, source types, and message formats drive the strongest engagement.
+1. Users complete direct coupon purchases inside the Telegram flow.
+2. Coupons can be delivered immediately after successful payment with high reliability.
+3. Unit economics are positive after payment fees and inventory losses.
+4. Complaint and dispute rates remain manageable for a small team.
+5. The business can run on a small set of controlled inventory without operational chaos.
 
 ## Launch Plan
 
 ### Phase 0: Setup
-- define sourcing checklist
-- define publishing template
-- define support and takedown procedure
-- identify first compliant supply sources
+- identify transferable coupon inventory
+- choose ILS-capable payment provider
+- define final-sale terms and no-refund disclosure
+- define delivery and support logging workflow
 
-### Phase 1: Closed Beta
-- launch to a small group of users
-- publish a limited set of verified offers
-- collect engagement and quality feedback
+### Phase 1: Controlled Launch
+- launch a small number of coupon SKUs
+- limit inventory
+- monitor payment completion, delivery, and complaints
 
-### Phase 2: Narrow Expansion
-- expand the strongest categories
-- add more partner-approved sources
-- refine onboarding and offer presentation based on performance
+### Phase 2: Optimization
+- refine listing formats
+- improve delivery reliability
+- expand only the coupon types with acceptable margins and failure rates
 
 ## Open Questions
-- should the first launch be bot-only, channel-only, or hybrid
-- which fast-food or adjacent categories have the cleanest compliant supply
-- what minimum proof should an operator require before publishing a curated public offer
-- which affiliate or partner models are most workable in Israel for the initial category set
-- what exact support response time is necessary to preserve trust in a Telegram-native experience
+- which exact coupon types are safest to pre-buy and resell
+- which ILS payment provider is best for this product
+- what pre-purchase wording is required for the no-refund policy
+- what manual exception policy should exist for obvious delivery failures even if refunds are not generally available

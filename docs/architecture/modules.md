@@ -1,108 +1,109 @@
 # Modules
 
 ## Module Overview
-The MVP should be organized into a small set of modules with clear ownership boundaries. The goal is not to maximize separation for its own sake, but to make operations, debugging, and future iteration easier without adding distributed-system overhead.
-
-The recommended MVP modules are:
+The MVP should be organized around a direct coupon sale flow, not a discovery marketplace. The recommended modules are:
 - bot
 - api
 - admin
-- offer governance
+- inventory and catalog
+- order and payment
+- delivery and support
 - analytics and audit
 - background jobs
 
 Modules intentionally excluded from MVP:
-- payments
-- fulfillment automation
 - merchant self-serve
+- broad marketplace features
 - scraping or browser automation
+- automated refund engine
 
 ## 1. Bot Module
 
 ### Responsibilities
 - receive Telegram updates through webhook handlers
-- manage onboarding flow
-- capture user preferences such as category interest
-- return offer lists and offer detail views
-- collect user feedback such as "worked" or "didn't work"
-- redirect users to merchant or partner destinations
+- show coupon listings and detail views
+- present pre-purchase terms including final-sale and no-refund disclosure
+- start payment flow
+- deliver purchased coupons after confirmed payment
+- collect complaint or support messages
 
 ### What It Owns
 - Telegram-specific message formatting
 - Telegram command handling
-- Telegram session or conversational state that is safe to keep lightweight
+- lightweight conversational state
 
 ### What It Does Not Own
-- canonical offer data
-- publishing approval decisions
+- canonical coupon inventory
+- payment confirmation rules
 - supplier verification logic
 - direct database writes outside approved API pathways
 
 ### Inputs
 - Telegram webhook events
-- active offer data from API
-- preference and feedback endpoints from API
+- active listing data from API
+- payment and delivery endpoints from API
 
 ### Outputs
 - Telegram messages
-- feedback events
-- click events
+- checkout intents
+- support events
 
 ### Failure Points
 - Telegram API delivery failures
 - invalid bot state transitions
-- broken deep links or malformed message formatting
+- coupon delivery message failure
 
 ## 2. API Module
 
 ### Responsibilities
 - act as the main business logic layer
 - expose endpoints for bot and admin surfaces
-- validate offer lifecycle changes
+- validate listing, coupon, order, payment, and delivery lifecycle changes
 - enforce required metadata and status rules
-- manage categories, source labels, reports, and support states
-- provide read models for active offers and internal review queues
+- manage complaint and support states
 
 ### What It Owns
-- offer lifecycle rules
-- validation logic
-- source-of-truth APIs
+- inventory lifecycle rules
+- order lifecycle rules
+- payment lifecycle rules
+- delivery gating rules
 - authorization rules for admin versus user-facing operations
 
 ### What It Does Not Own
-- long-running campaign management outside MVP scope
+- raw card handling
 - merchant-side automation
-- direct Telegram rendering concerns
+- Telegram rendering concerns
 
 ### Inputs
 - bot requests
 - admin requests
 - job runner invocations
+- payment-provider callbacks
 
 ### Outputs
-- validated offer records
-- issue queues
-- analytics events
+- validated inventory and listings
+- validated orders and payments
+- delivery triggers
 - audit entries
 
 ### Failure Points
 - invalid state transitions
-- schema drift
+- duplicate order creation
 - deployment bugs affecting all surfaces
 
 ## 3. Admin Module
 
 ### Responsibilities
-- create, edit, preview, publish, pause, expire, and remove offers
-- review invalid-offer reports
+- create coupon inventory entries
+- create, edit, preview, publish, pause, expire, and remove listings
 - inspect source provenance and disclosure metadata
-- review supplier quality signals
-- provide operators with a manageable workflow for small-team operations
+- inspect coupon assignment and delivery history
+- review complaints and support cases
 
 ### What It Owns
 - operator user interface
 - internal review flows
-- publish/pause/remove actions routed through API
+- publish and pause actions routed through API
 
 ### What It Does Not Own
 - core business rules
@@ -110,57 +111,125 @@ Modules intentionally excluded from MVP:
 - external supplier integrations
 
 ### Inputs
-- API read models for offers, reports, and source metadata
+- API read models for listings, coupons, orders, payments, and support cases
 
 ### Outputs
 - operator actions sent to API
 
 ### Failure Points
-- unclear operator workflows causing bad publishing decisions
-- insufficient validation at publish time
-- accidental operator mistakes due to weak UX
+- bad inventory entry
+- weak pre-publish validation
+- operator mistakes during assignment review
 
-## 4. Offer Governance Module
+## 4. Inventory and Catalog Module
 
 ### Responsibilities
-- represent the trust and compliance layer around offers
-- store source type, provenance notes, rights checks, and disclosure state
-- manage publication statuses such as draft, approved, published, paused, expired, and removed
-- track invalid-offer reports and moderation outcomes
+- store pre-bought coupon inventory
+- represent Telegram-facing listings
+- store source provenance, rights checks, and disclosure state
+- manage listing status and inventory status
 
 ### What It Owns
-- offer review checklist model
-- publication state machine
-- report-to-resolution workflow
-- policy-oriented metadata used to minimize risk
+- inventory intake checklist
+- listing state machine
+- coupon inventory state machine
 
 ### What It Does Not Own
 - Telegram interaction logic
-- merchant acquisition strategy
-- payment or refund workflows
+- payment execution
+- supplier acquisition strategy
 
 ### Inputs
-- operator review actions
-- user issue reports
-- scheduled expiry checks
+- operator intake actions
+- expiry checks
+- delivery results
 
 ### Outputs
-- trusted active-offer set for bot delivery
-- audit-ready offer history
-- paused or removed content decisions
+- active listing set for bot delivery
+- assigned inventory for paid orders
+- audit-ready inventory history
 
 ### Failure Points
 - incomplete source documentation
-- ambiguous disclosure state
-- inconsistent status transitions leading to stale offers
+- overselling inventory
+- stale or expired inventory left active
 
-## 5. Analytics and Audit Module
+## 5. Order and Payment Module
 
 ### Responsibilities
-- capture offer views, clicks, joins, and feedback
-- track invalid-offer reports and resolution times
+- create orders from buy attempts
+- start payment with an ILS-capable provider
+- record payment success or failure
+- ensure coupon assignment only happens after successful payment
+- record final-sale / no-refund acknowledgment
+
+### What It Owns
+- order lifecycle
+- payment lifecycle
+- price snapshot at time of sale
+- provider reference data
+
+### What It Does Not Own
+- raw card data
+- Telegram rendering logic
+- supplier verification
+
+### Inputs
+- buy requests from bot
+- payment-provider callbacks
+- admin actions for manual review
+
+### Outputs
+- order records
+- payment records
+- delivery trigger on successful payment
+- dispute evidence
+
+### Failure Points
+- payment succeeds but callback is delayed
+- duplicate charges
+- chargeback pressure despite no-refund policy
+
+## 6. Delivery and Support Module
+
+### Responsibilities
+- assign coupon inventory to a paid order
+- deliver the coupon to the user in Telegram
+- track delivery timestamp and evidence
+- log user complaints and support cases
+- support manual review of invalid coupon claims
+
+### What It Owns
+- assignment-to-delivery workflow
+- support-case records
+- delivery confirmation state
+
+### What It Does Not Own
+- payment-provider state
+- supplier acquisition logic
+
+### Inputs
+- paid orders
+- support requests
+- admin review actions
+
+### Outputs
+- delivered coupon messages
+- support-case status changes
+- disputed or voided inventory markers
+
+### Failure Points
+- assigned coupon not delivered
+- duplicate delivery
+- complaint handling without enough evidence
+
+## 7. Analytics and Audit Module
+
+### Responsibilities
+- capture listing views, purchases, payment outcomes, delivery outcomes, and complaints
+- track complaint resolution times
 - maintain audit logs of operator actions and status changes
-- surface source quality and supplier concentration metrics
+- surface source quality, conversion, and dispute metrics
 
 ### What It Owns
 - event model for MVP metrics
@@ -168,7 +237,7 @@ Modules intentionally excluded from MVP:
 - operational reporting inputs
 
 ### What It Does Not Own
-- user-facing recommendation logic beyond basic reporting support
+- recommendation engines
 - external BI complexity not needed for MVP
 
 ### Inputs
@@ -178,20 +247,20 @@ Modules intentionally excluded from MVP:
 
 ### Outputs
 - dashboards or reports for operators
-- metrics used in roadmap decisions
+- metrics used in product decisions
 - recovery context for incidents
 
 ### Failure Points
-- missing events causing bad product decisions
-- audit gaps making disputes harder to resolve
-- analytics coupling that slows core user flows
+- missing payment or delivery events
+- audit gaps during disputes
+- analytics coupling that slows core flows
 
-## 6. Background Jobs Module
+## 8. Background Jobs Module
 
 ### Responsibilities
-- expire offers automatically based on timestamps
-- schedule future publish times when needed
-- run stale-offer checks
+- expire listings and inventory automatically based on timestamps
+- reconcile delayed payment events
+- run undelivered-order checks
 - generate periodic summary metrics
 - trigger non-blocking operational notifications
 
@@ -201,7 +270,7 @@ Modules intentionally excluded from MVP:
 
 ### What It Does Not Own
 - third-party website automation
-- fulfillment automation
+- automated refund execution
 - merchant-side checkout actions
 
 ### Inputs
@@ -210,51 +279,41 @@ Modules intentionally excluded from MVP:
 - API-issued jobs
 
 ### Outputs
-- offer status updates
+- listing and inventory status updates
 - notifications
 - aggregate metrics
 
 ### Failure Points
 - missed expiry jobs
-- duplicate scheduling
+- undetected paid-but-undelivered orders
 - background task backlog
 
 ## Integration Boundaries
 
 ### Bot -> API
-- Bot may read active offers and submit user actions.
-- Bot may not decide compliance state or bypass validation.
+- Bot may read active listings and submit buy or support actions.
+- Bot may not decide inventory, payment, or compliance state.
 
 ### Admin -> API
 - Admin may trigger operator actions.
 - Admin may not mutate the database directly.
 
 ### API -> Database
-- API is the only write path for business entities in normal operation.
+- API is the only normal write path for business entities.
 - Direct scripts should be reserved for migrations and controlled maintenance.
+
+### Payment Provider -> API
+- Payment provider confirms payment state.
+- Coupon delivery must never rely on client-side success alone.
 
 ### Background Jobs -> API or Database
 - Jobs may perform approved internal lifecycle actions.
-- Jobs may not introduce new business rules outside the API/domain layer.
+- Jobs may not invent new business rules outside the API/domain layer.
 
 ### Analytics -> Core Flows
-- Analytics should observe the system, not become a hard dependency for publishing or Telegram response generation.
+- Analytics should observe the system, not become a hard dependency for order completion or coupon delivery.
 
 ## Explicit MVP Exclusions
-
-### Payments Module
-Why excluded:
-- direct payment handling introduces refund, chargeback, fraud, and consumer-protection complexity too early
-
-Deferred until:
-- there is clear legal approval, explicit supply rights, and proven user demand for direct commerce
-
-### Fulfillment Module
-Why excluded:
-- the MVP is discovery and partner distribution, not owned coupon delivery or merchant-side fulfillment
-
-Deferred until:
-- the business moves beyond click-out and approved distribution models
 
 ### Merchant Self-Serve Module
 Why excluded:
@@ -268,4 +327,11 @@ Why excluded:
 - directly conflicts with the product's legal and platform-risk constraints
 
 Deferred until:
-- not planned in current strategy; compliant feeds or formal integrations should be preferred instead
+- not planned in current strategy; compliant sourcing should be preferred instead
+
+### Automated Refund Module
+Why excluded:
+- the stated MVP policy is that no refunds are available
+
+Deferred until:
+- only if the business later changes policy or is required to support structured refund operations

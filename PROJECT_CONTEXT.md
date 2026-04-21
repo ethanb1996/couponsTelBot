@@ -1,94 +1,87 @@
 # PROJECT_CONTEXT
 
 ## Product Vision
-Build a Telegram-based coupon product for Israel that helps users discover and redeem real savings with minimal effort. The product should begin as a narrow MVP focused on trusted, easy-to-use offers delivered through Telegram, with a simple experience that does not depend on risky automation or platform-intrusive behavior.
+Build a Telegram-based coupon resale product for Israel with one very simple MVP loop:
 
-The longer-term vision is to become a compliant savings layer for Israeli consumers, starting with curated coupon discovery and potentially expanding into compliant resale or facilitation models only where lawful and operationally reliable.
+1. Acquire pre-bought coupon inventory
+2. List the coupon in Telegram
+3. Accept payment in ILS through a payment provider
+4. Deliver the coupon to the user in Telegram
+
+The product should optimize for speed, operational simplicity, and controlled inventory rather than broad discovery. The goal is not to aggregate the whole market. The goal is to prove that users will buy a small number of clearly priced, immediately deliverable coupon deals inside a Telegram flow.
 
 ## Target Users
-- Price-sensitive consumers in Israel looking for savings on fast food, food delivery, groceries, and other everyday purchases
-- Telegram-native users who prefer a lightweight messaging experience over downloading a new app
-- Deal seekers who value verified, usable offers over large volumes of low-quality promotions
-- Early merchant or reseller partners who want a simple distribution channel for approved offers
+- Price-sensitive users in Israel who already use Telegram and want a fast purchase flow
+- Users who prefer buying a ready coupon quickly instead of searching for deals themselves
+- Users comfortable with a simple all-sales-final model if terms are clear before payment
 
 ## Core Problem
-Consumers in Israel often need to search across multiple sites, apps, and social channels to find worthwhile discounts. Many available offers are expired, misleading, difficult to redeem, or not clearly relevant to local users. This creates wasted time, low trust, and inconsistent savings.
+Users who want discounted fast-food or similar coupons often face a fragmented and inconvenient experience:
+- offers are scattered across apps, websites, and social channels
+- redemption value is hard to compare quickly
+- finding a usable coupon can take more effort than the savings are worth
 
-For a Telegram-first audience, there is no simple, trusted product that delivers relevant coupon opportunities in a fast, localized, low-friction format.
+This MVP solves a narrower problem than general coupon discovery. It gives the user a direct purchase path to a pre-bought coupon that is already controlled by the seller and delivered immediately after payment.
 
 ## Value Proposition
-The product gives Israeli users a trusted stream of timely, relevant coupon offers in Telegram with:
-- Fast access to current deals without app installation
-- Clear redemption instructions in a mobile-friendly format
-- Curated inventory that prioritizes validity and trust over volume
-- A localized user experience suited to Israeli users and merchants
-- A safer operating model that avoids captcha bypassing, restricted automation, and brittle sourcing methods
+The product offers:
+- a simple Telegram-native buy flow
+- pre-bought coupon inventory that is already in hand before sale
+- immediate coupon delivery after successful payment
+- pricing in ILS through a payment provider that supports ILS
+- a narrow and understandable operating model
 
 ## Constraints
 
 ### Legal Constraints
-- The product must minimize legal and platform risk at every stage.
-- The MVP must not rely on captcha bypassing, anti-bot evasion, restricted automation, or behavior that violates third-party terms.
-- The product must not misrepresent merchant affiliation, coupon ownership, availability, or endorsement.
-- Any resale or facilitation model must be treated as conditional on legal review and lawful supply rights.
-- Promotional disclosures, refund handling, and customer communications must be compatible with Israeli consumer expectations and applicable law.
-- There must be a clear process for removing expired, invalid, disputed, or non-compliant offers.
+- The product must not rely on captcha bypassing, anti-bot evasion, or restricted automation.
+- The product must not misrepresent merchant affiliation, authorization, or coupon rights.
+- The team must verify that any pre-bought coupon inventory is lawfully held and transferable before resale.
+- The MVP must clearly disclose that all sales are final and that no refunds are available.
+- The no-refund policy should be treated as a legal and trust-sensitive area that requires local review before launch.
 
 ### Operational Constraints
-- The team should optimize for a small-team MVP with manageable support load.
-- Offer freshness is critical; stale or invalid coupons will quickly erode trust.
-- Manual verification and manual sourcing are acceptable in MVP if they reduce legal and operational risk.
-- Supply should come from safer channels such as direct partnerships, licensed inventory, reseller agreements, affiliate relationships, user-submitted leads with review, or manually verified public offers where lawful.
-- The product must remain focused on a narrow initial category set instead of broad marketplace coverage.
+- Inventory must be pre-bought before listing so the system never sells stock it does not control.
+- The team should start with a small set of coupon types and a small number of suppliers.
+- Coupon freshness, validity, and transferability must be checked before listing.
+- The team needs a manual process for voiding bad inventory and handling user complaints even if refunds are not offered.
+- The MVP must remain small enough for a small team to operate manually.
 
 ### Technical Constraints
-- Telegram should be the primary user surface in MVP.
-- The system should not depend on brittle scraping of protected sites.
-- The MVP should avoid unnecessary complexity such as a full standalone consumer app.
-- Core data must support offer source, expiration, redemption instructions, status, category, and audit history.
-- Basic observability is required so the team can detect broken offers, poor content quality, and operational failures early.
+- Telegram is the primary user surface.
+- The MVP should support a direct sale flow, not a large marketplace.
+- The system must support ILS pricing and a payment provider that can accept ILS.
+- The system must securely store coupon inventory and release it only after successful payment.
+- The product must avoid risky automation dependencies on merchant or provider systems.
 
 ## Revenue Model Hypothesis
-The most plausible early revenue model is a mix of:
-- Affiliate or referral commissions from compliant partner programs
-- Sponsored placements from approved merchants or distributors
-- Featured offer distribution for trusted partners
-- Lead-generation fees for qualified partner traffic
+The MVP revenue model is straightforward:
+- buy coupon inventory below resale price
+- sell coupon inventory in Telegram at a markup
 
-If the business later proves demand and secures lawful supply rights, an additional revenue path may be a facilitation fee or managed-resale margin on approved inventory. That should not be assumed for MVP.
-
-For MVP, the preferred monetization order is:
-1. Affiliate or referral revenue
-2. Sponsored merchant placements
-3. Partner distribution fees
-4. Managed inventory or resale economics only after validation and legal review
+Gross margin comes from the spread between acquisition cost and resale price, minus payment provider fees and support loss from invalid inventory.
 
 ## Risks
-- Legal or platform risk if sourcing drifts into restricted automation, scraping, or unclear resale rights
-- Trust risk if users encounter expired, misleading, or hard-to-redeem offers
-- Supply risk if the team cannot secure enough safe, repeatable inventory sources
-- Margin risk if manual operations are too expensive relative to revenue
-- Support risk if refunds, complaints, or failed redemptions create operational drag
-- Distribution risk if Telegram retention is good but user acquisition is weak
-- Reputation risk if a small number of bad coupon experiences damage credibility
-- Localization risk if content, support, or merchant flows do not fit Israeli user expectations
+- Coupon transferability risk if pre-bought coupons are not legally or contractually resellable
+- Payment and chargeback risk because users may dispute all-sales-final transactions
+- User trust risk if coupons fail after delivery and no refund is available
+- Inventory risk if pre-bought stock expires, is revoked, or was already used
+- Supplier risk if inventory quality depends on a small number of sources
+- Regulatory or consumer-protection risk if the no-refund policy is not acceptable in practice
+- Reputation risk if even a few failed transactions make the bot look unsafe
 
 ## Assumptions
-- Telegram is a viable primary channel for reaching at least one meaningful segment of Israeli deal seekers.
-- Users will prefer a smaller number of verified offers over a large stream of noisy promotions.
-- A manual, compliance-first MVP can validate demand before deeper automation or broader category expansion.
-- Fast food and adjacent high-frequency consumer categories may be a strong starting wedge because users understand the value quickly.
-- Merchant, reseller, or affiliate partners may see Telegram distribution as a useful incremental channel.
-- Trust, freshness, and simplicity are stronger early differentiators than broad inventory coverage.
+- There is at least one category of coupons in Israel that can be pre-bought, stored, and resold with acceptable rights clarity.
+- Users will accept a direct Telegram purchase flow if value and delivery are immediate.
+- A payment provider that supports ILS can be integrated with acceptable friction.
+- The business can start with controlled inventory rather than broad supply.
+- A clearly disclosed no-refund policy may reduce operational complexity, but it also increases trust and legal risk.
 
 ## Open Questions
-- Should the MVP start strictly with fast food, or include adjacent categories such as food delivery and groceries?
-- Will the initial supply model be affiliate, partner-based, reseller-based, manually curated, or some combination?
-- Is the first launch surface a Telegram bot, a Telegram channel, or both?
-- What proof is required before publishing an offer as valid and current?
-- What commercial disclosures are needed when an offer is sponsored, affiliated, or partner-supplied?
-- What refund or support policy is needed if a promoted offer fails at redemption time?
-- What legal review is required before enabling any resale or managed inventory model in Israel?
-- What are the best payment and payout options if the product eventually handles transactions directly?
-- Which acquisition loop beyond Telegram can drive the first reliable cohort of users?
-- What success threshold would justify moving from manual curation to more structured partner integrations?
+- Which coupon types are actually transferable and safe to resell?
+- Which payment provider is the best fit for ILS payments in this product?
+- Should the first launch use a Telegram bot, a channel, or both?
+- What exact terms must be shown before purchase so the no-refund policy is explicit?
+- What operational fallback is needed when a delivered coupon is invalid but the policy says no refunds?
+- How much inventory should be pre-bought before proving demand?
+- What evidence of coupon validity should be stored before listing inventory for sale?
