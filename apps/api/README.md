@@ -1,3 +1,9 @@
 # API App
 
-Core backend APIs for orders, offers, payments, fulfillment, and admin support.
+Single Go service for the coupon sales MVP.
+
+It owns:
+- Telegram bot webhooks
+- payment webhooks
+- embedded admin pages
+- inventory, listing, order, payment, and delivery state

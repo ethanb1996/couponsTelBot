@@ -1,0 +1,85 @@
+package apphttp
+
+import (
+	"context"
+	"errors"
+	"log/slog"
+	"net/http"
+	"strings"
+	"time"
+
+	"github.com/ethanb1996/couponsTelBot/apps/api/internal/admin"
+	"github.com/ethanb1996/couponsTelBot/apps/api/internal/config"
+	"github.com/ethanb1996/couponsTelBot/apps/api/internal/payments"
+	"github.com/ethanb1996/couponsTelBot/apps/api/internal/security"
+	"github.com/ethanb1996/couponsTelBot/apps/api/internal/store"
+	"github.com/ethanb1996/couponsTelBot/apps/api/internal/telegram"
+)
+
+type Dependencies struct {
+	Logger *slog.Logger
+	Config config.Config
+	Store  *store.Postgres
+}
+
+func NewRouter(deps Dependencies) (http.Handler, error) {
+	if deps.Logger == nil {
+		return nil, errors.New("logger is required")
+	}
+
+	if deps.Store == nil {
+		return nil, errors.New("store is required")
+	}
+
+	adminHandler, err := admin.NewHandler(deps.Logger, deps.Store)
+	if err != nil {
+		return nil, err
+	}
+
+	telegramHandler := telegram.NewWebhookHandler(deps.Logger, deps.Config.TelegramWebhookSecret)
+	paymentHandler := payments.NewWebhookHandler(
+		deps.Logger,
+		deps.Config.PaymentProviderName,
+		deps.Config.PaymentProviderWebhookSecret,
+	)
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/healthz", healthHandler(deps.Store))
+	mux.Handle("/admin/", security.BasicAuth(deps.Config.AdminBasicAuthUser, deps.Config.AdminBasicAuthPass)(http.HandlerFunc(adminHandler.Route)))
+	mux.HandleFunc("/admin", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/admin/", http.StatusSeeOther)
+	})
+	mux.HandleFunc("/webhooks/telegram", telegramHandler.ServeHTTP)
+	mux.HandleFunc("/webhooks/payments/", paymentHandler.ServeHTTP)
+
+	return Chain(
+		mux,
+		WithRecovery(deps.Logger),
+		WithRequestID(),
+		WithAccessLog(deps.Logger),
+	), nil
+}
+
+func healthHandler(db *store.Postgres) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
+			return
+		}
+
+		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+		defer cancel()
+
+		databaseStatus := "ok"
+		if err := db.Ping(ctx); err != nil {
+			databaseStatus = "unavailable"
+		}
+
+		WriteJSON(w, http.StatusOK, map[string]string{
+			"status":   "ok",
+			"database": databaseStatus,
+			"service":  "coupon-sales-api",
+			"path":     strings.TrimSpace(r.URL.Path),
+		})
+	}
+}
