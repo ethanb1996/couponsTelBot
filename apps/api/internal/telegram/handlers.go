@@ -6,17 +6,21 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+
+	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
 type WebhookHandler struct {
-	logger *slog.Logger
-	secret string
+	logger     *slog.Logger
+	secret     string
+	botService *BotService
 }
 
-func NewWebhookHandler(logger *slog.Logger, secret string) *WebhookHandler {
+func NewWebhookHandler(logger *slog.Logger, secret string, botService *BotService) *WebhookHandler {
 	return &WebhookHandler{
-		logger: logger,
-		secret: secret,
+		logger:     logger,
+		secret:     secret,
+		botService: botService,
 	}
 }
 
@@ -37,16 +41,20 @@ func (h *WebhookHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var payload map[string]any
-	if err := json.Unmarshal(body, &payload); err != nil {
+	var update tgbotapi.Update
+	if err := json.Unmarshal(body, &update); err != nil {
+		h.logger.Error("failed to unmarshal telegram update", "error", err)
 		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
 		return
 	}
 
-	h.logger.Info("telegram webhook received",
-		"update_id", readUpdateID(payload),
-		"payload_bytes", len(body),
-	)
+	// Process the update asynchronously
+	go func() {
+		ctx := r.Context()
+		if err := h.botService.HandleUpdate(ctx, update); err != nil {
+			h.logger.Error("failed to handle update", "error", err, "update_id", update.UpdateID)
+		}
+	}()
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)

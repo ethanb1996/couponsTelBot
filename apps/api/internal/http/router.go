@@ -36,7 +36,13 @@ func NewRouter(deps Dependencies) (http.Handler, error) {
 		return nil, err
 	}
 
-	telegramHandler := telegram.NewWebhookHandler(deps.Logger, deps.Config.TelegramWebhookSecret)
+	// Create bot service
+	botService, err := telegram.NewBotService(deps.Logger, deps.Store, deps.Config.TelegramBotToken, &deps.Config)
+	if err != nil {
+		return nil, err
+	}
+
+	telegramHandler := telegram.NewWebhookHandler(deps.Logger, deps.Config.TelegramWebhookSecret, botService)
 	paymentHandler := payments.NewWebhookHandler(
 		deps.Logger,
 		deps.Config.PaymentProviderName,

@@ -1335,6 +1335,75 @@ func scanSupportCase(row pgx.Row) (SupportCase, error) {
 	return supportCase, err
 }
 
+func (p *Postgres) GetOrCreateUser(ctx context.Context, telegramUserID int64, displayName, userName, languageCode string) (User, error) {
+	if err := p.ensurePool(); err != nil {
+		return User{}, err
+	}
+	if telegramUserID == 0 {
+		return User{}, fmt.Errorf("%w: telegram user id is required", ErrInvalidArgument)
+	}
+
+	// First try to find existing user
+	row := p.Pool.QueryRow(ctx, `
+		SELECT
+			id,
+			telegram_user_id,
+			telegram_user,
+			display_name,
+			language_code,
+			status,
+			first_seen_at,
+			last_seen_at,
+			created_at,
+			updated_at
+		FROM users
+		WHERE telegram_user_id = $1
+	`, telegramUserID)
+
+	user, err := scanUser(row)
+	if err == nil {
+		// User exists, update last_seen_at
+		_, _ = p.Pool.Exec(ctx, `UPDATE users SET last_seen_at = NOW() WHERE id = $1`, user.ID)
+		user.LastSeenAt = time.Now().UTC()
+		return user, nil
+	}
+
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return User{}, err
+	}
+
+	// User doesn't exist, create new one
+	newRow := p.Pool.QueryRow(ctx, `
+		INSERT INTO users (
+			telegram_user_id,
+			telegram_user,
+			display_name,
+			language_code,
+			status,
+			first_seen_at,
+			last_seen_at
+		) VALUES ($1, $2, $3, $4, 'active', NOW(), NOW())
+		RETURNING
+			id,
+			telegram_user_id,
+			telegram_user,
+			display_name,
+			language_code,
+			status,
+			first_seen_at,
+			last_seen_at,
+			created_at,
+			updated_at
+	`,
+		telegramUserID,
+		userName,
+		displayName,
+		languageCode,
+	)
+
+	return scanUser(newRow)
+}
+
 func defaultString(value string, fallback string) string {
 	if strings.TrimSpace(value) == "" {
 		return fallback
@@ -1352,4 +1421,24 @@ func mapStoreErr(err error) error {
 func isUniqueViolation(err error) bool {
 	var pgErr *pgconn.PgError
 	return errors.As(err, &pgErr) && pgErr.Code == "23505"
+}
+
+func scanUser(row pgx.Row) (User, error) {
+	var user User
+	err := row.Scan(
+		&user.ID,
+		&user.TelegramUserID,
+		&user.TelegramUser,
+		&user.DisplayName,
+		&user.LanguageCode,
+		&user.Status,
+		&user.FirstSeenAt,
+		&user.LastSeenAt,
+		&user.CreatedAt,
+		&user.UpdatedAt,
+	)
+	if err != nil {
+		return User{}, mapStoreErr(err)
+	}
+	return user, nil
 }
