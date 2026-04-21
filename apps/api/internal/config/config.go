@@ -1,33 +1,88 @@
 package config
 
 import (
+	"bufio"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
+	"time"
 )
 
 type Config struct {
-	AppEnv                        string
-	Port                          string
-	AppBaseURL                    string
-	DatabaseURL                   string
-	TelegramBotToken              string
-	TelegramWebhookSecret         string
-	PaymentProviderName           string
-	PaymentProviderSecret         string
-	PaymentProviderWebhookSecret  string
-	AdminBasicAuthUser            string
-	AdminBasicAuthPass            string
-	CouponEncryptionKey           string
+	AppEnv                       string
+	Port                         string
+	AppBaseURL                   string
+	DatabaseURL                  string
+	DatabaseApplicationName      string
+	DatabaseConnectTimeout       time.Duration
+	DatabaseMaxConns             int32
+	DatabaseMinConns             int32
+	DatabaseMaxConnLifetime      time.Duration
+	DatabaseMaxConnIdleTime      time.Duration
+	DatabaseHealthCheckPeriod    time.Duration
+	DatabaseQueryExecMode        string
+	TelegramBotToken             string
+	TelegramWebhookSecret        string
+	PaymentProviderName          string
+	PaymentProviderSecret        string
+	PaymentProviderWebhookSecret string
+	AdminBasicAuthUser           string
+	AdminBasicAuthPass           string
+	CouponEncryptionKey          string
 }
 
 func Load() (Config, error) {
+	if err := loadDotEnv(".env"); err != nil {
+		return Config{}, err
+	}
+
+	databaseConnectTimeout, err := durationEnvWithDefault("DATABASE_CONNECT_TIMEOUT", 10*time.Second)
+	if err != nil {
+		return Config{}, err
+	}
+
+	databaseMaxConns, err := int32EnvWithDefault("DATABASE_MAX_CONNS", 10)
+	if err != nil {
+		return Config{}, err
+	}
+
+	databaseMinConns, err := int32EnvWithDefault("DATABASE_MIN_CONNS", 0)
+	if err != nil {
+		return Config{}, err
+	}
+
+	databaseMaxConnLifetime, err := durationEnvWithDefault("DATABASE_MAX_CONN_LIFETIME", 30*time.Minute)
+	if err != nil {
+		return Config{}, err
+	}
+
+	databaseMaxConnIdleTime, err := durationEnvWithDefault("DATABASE_MAX_CONN_IDLE_TIME", 5*time.Minute)
+	if err != nil {
+		return Config{}, err
+	}
+
+	databaseHealthCheckPeriod, err := durationEnvWithDefault("DATABASE_HEALTH_CHECK_PERIOD", time.Minute)
+	if err != nil {
+		return Config{}, err
+	}
+
 	cfg := Config{
 		AppEnv:                       envWithDefault("APP_ENV", "development"),
 		Port:                         envWithDefault("PORT", "8080"),
 		AppBaseURL:                   envWithDefault("APP_BASE_URL", "http://localhost:8080"),
 		DatabaseURL:                  strings.TrimSpace(os.Getenv("DATABASE_URL")),
+		DatabaseApplicationName:      envWithDefault("DATABASE_APPLICATION_NAME", "coupons-api"),
+		DatabaseConnectTimeout:       databaseConnectTimeout,
+		DatabaseMaxConns:             databaseMaxConns,
+		DatabaseMinConns:             databaseMinConns,
+		DatabaseMaxConnLifetime:      databaseMaxConnLifetime,
+		DatabaseMaxConnIdleTime:      databaseMaxConnIdleTime,
+		DatabaseHealthCheckPeriod:    databaseHealthCheckPeriod,
+		DatabaseQueryExecMode:        strings.ToLower(envWithDefault("DATABASE_QUERY_EXEC_MODE", "exec")),
 		TelegramBotToken:             strings.TrimSpace(os.Getenv("TELEGRAM_BOT_TOKEN")),
 		TelegramWebhookSecret:        strings.TrimSpace(os.Getenv("TELEGRAM_WEBHOOK_SECRET")),
 		PaymentProviderName:          strings.TrimSpace(os.Getenv("PAYMENT_PROVIDER_NAME")),
@@ -65,6 +120,10 @@ func Load() (Config, error) {
 		return Config{}, fmt.Errorf("missing required environment variables: %s", strings.Join(missing, ", "))
 	}
 
+	if err := validateDatabaseConfig(cfg); err != nil {
+		return Config{}, err
+	}
+
 	return cfg, nil
 }
 
@@ -86,4 +145,128 @@ func envWithDefault(key, fallback string) string {
 	}
 
 	return value
+}
+
+func loadDotEnv(path string) error {
+	file, err := os.Open(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return fmt.Errorf("open %s: %w", path, err)
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	for lineNumber := 1; scanner.Scan(); lineNumber++ {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+
+		if strings.HasPrefix(line, "export ") {
+			line = strings.TrimSpace(strings.TrimPrefix(line, "export "))
+		}
+
+		key, value, ok := strings.Cut(line, "=")
+		if !ok {
+			return fmt.Errorf("parse %s line %d: expected KEY=VALUE", filepath.Base(path), lineNumber)
+		}
+
+		key = strings.TrimSpace(key)
+		if key == "" {
+			return fmt.Errorf("parse %s line %d: missing key", filepath.Base(path), lineNumber)
+		}
+
+		existingValue, exists := os.LookupEnv(key)
+		if exists && strings.TrimSpace(existingValue) != "" {
+			continue
+		}
+
+		value = strings.TrimSpace(value)
+		if len(value) >= 2 {
+			if (value[0] == '"' && value[len(value)-1] == '"') || (value[0] == '\'' && value[len(value)-1] == '\'') {
+				value = value[1 : len(value)-1]
+			}
+		}
+
+		if err := os.Setenv(key, value); err != nil {
+			return fmt.Errorf("set %s from %s: %w", key, filepath.Base(path), err)
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		return fmt.Errorf("read %s: %w", path, err)
+	}
+
+	return nil
+}
+
+func int32EnvWithDefault(key string, fallback int32) (int32, error) {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return fallback, nil
+	}
+
+	parsed, err := strconv.ParseInt(value, 10, 32)
+	if err != nil {
+		return 0, fmt.Errorf("%s must be a valid integer: %w", key, err)
+	}
+
+	return int32(parsed), nil
+}
+
+func durationEnvWithDefault(key string, fallback time.Duration) (time.Duration, error) {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return fallback, nil
+	}
+
+	parsed, err := time.ParseDuration(value)
+	if err != nil {
+		return 0, fmt.Errorf("%s must be a valid duration: %w", key, err)
+	}
+
+	return parsed, nil
+}
+
+func validateDatabaseConfig(cfg Config) error {
+	if cfg.DatabaseApplicationName == "" {
+		return fmt.Errorf("DATABASE_APPLICATION_NAME must not be empty")
+	}
+
+	if cfg.DatabaseConnectTimeout <= 0 {
+		return fmt.Errorf("DATABASE_CONNECT_TIMEOUT must be greater than zero")
+	}
+
+	if cfg.DatabaseMaxConns <= 0 {
+		return fmt.Errorf("DATABASE_MAX_CONNS must be greater than zero")
+	}
+
+	if cfg.DatabaseMinConns < 0 {
+		return fmt.Errorf("DATABASE_MIN_CONNS must be zero or greater")
+	}
+
+	if cfg.DatabaseMinConns > cfg.DatabaseMaxConns {
+		return fmt.Errorf("DATABASE_MIN_CONNS must be less than or equal to DATABASE_MAX_CONNS")
+	}
+
+	if cfg.DatabaseMaxConnLifetime <= 0 {
+		return fmt.Errorf("DATABASE_MAX_CONN_LIFETIME must be greater than zero")
+	}
+
+	if cfg.DatabaseMaxConnIdleTime <= 0 {
+		return fmt.Errorf("DATABASE_MAX_CONN_IDLE_TIME must be greater than zero")
+	}
+
+	if cfg.DatabaseHealthCheckPeriod <= 0 {
+		return fmt.Errorf("DATABASE_HEALTH_CHECK_PERIOD must be greater than zero")
+	}
+
+	switch cfg.DatabaseQueryExecMode {
+	case "", "cache_statement", "cache_describe", "describe_exec", "exec", "simple_protocol":
+		return nil
+	default:
+		return fmt.Errorf("DATABASE_QUERY_EXEC_MODE must be one of: cache_statement, cache_describe, describe_exec, exec, simple_protocol")
+	}
 }

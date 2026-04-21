@@ -19,3 +19,13 @@ Agent-driven repo scaffold for a Telegram-based coupon commerce MVP.
 3. Start with `docs/prd/mvp_prd.md`
 4. Convert approved scope into `docs/architecture/`
 5. Implement inside `apps/`
+
+## Database Approach
+
+The MVP starts on Supabase PostgreSQL for managed hosting, but the backend stays portable:
+
+- the Go service connects through a standard `DATABASE_URL`
+- SQL migrations remain plain PostgreSQL files
+- the repo does not depend on Supabase Auth, Realtime, Storage, or Edge Functions
+
+See [apps/api/README.md](apps/api/README.md) for local setup, Supabase SSL guidance, migration commands, and optional `DATABASE_*` pool settings.

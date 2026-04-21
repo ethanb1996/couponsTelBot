@@ -11,8 +11,8 @@ import (
 	"syscall"
 	"time"
 
-	apphttp "github.com/ethanb1996/couponsTelBot/apps/api/internal/http"
 	"github.com/ethanb1996/couponsTelBot/apps/api/internal/config"
+	apphttp "github.com/ethanb1996/couponsTelBot/apps/api/internal/http"
 	"github.com/ethanb1996/couponsTelBot/apps/api/internal/store"
 )
 
@@ -30,7 +30,17 @@ func main() {
 		Level: cfg.LogLevel(),
 	}))
 
-	db, err := store.Open(ctx, cfg.DatabaseURL)
+	db, err := store.Open(ctx, store.Options{
+		DatabaseURL:          cfg.DatabaseURL,
+		ApplicationName:      cfg.DatabaseApplicationName,
+		ConnectTimeout:       cfg.DatabaseConnectTimeout,
+		MaxConns:             cfg.DatabaseMaxConns,
+		MinConns:             cfg.DatabaseMinConns,
+		MaxConnLifetime:      cfg.DatabaseMaxConnLifetime,
+		MaxConnIdleTime:      cfg.DatabaseMaxConnIdleTime,
+		HealthCheckPeriod:    cfg.DatabaseHealthCheckPeriod,
+		DefaultQueryExecMode: cfg.DatabaseQueryExecMode,
+	})
 	if err != nil {
 		logger.Error("failed to open database", "error", err)
 		os.Exit(1)
