@@ -43,29 +43,33 @@ type Listing struct {
 	Status                  string
 	CreatedByAdminID        string
 	PublishedAt             *time.Time
+	AvailableInventoryCount int64
+	NextCouponExpiryAt      *time.Time
 	CreatedAt               time.Time
 	UpdatedAt               time.Time
 }
 
 type Coupon struct {
-	ID                    int64
-	ListingID             int64
-	SourceID              int64
-	MerchantName          string
-	CouponTitle           string
-	CouponValueAmount     int64
-	SalePriceAmount       int64
-	CurrencyCode          string
-	CouponMaskedDisplay   string
-	ExpiryAt              time.Time
-	TransferabilityStatus string
-	InventoryStatus       string
-	RightsVerifiedAt      *time.Time
+	ID                     int64
+	ListingID              int64
+	SourceID               int64
+	MerchantName           string
+	CouponTitle            string
+	CouponValueAmount      int64
+	SalePriceAmount        int64
+	CurrencyCode           string
+	CouponCodeCiphertext   []byte
+	CouponCodeNonce        []byte
+	CouponMaskedDisplay    string
+	ExpiryAt               time.Time
+	TransferabilityStatus  string
+	InventoryStatus        string
+	RightsVerifiedAt       *time.Time
 	RightsVerificationNote string
-	AcquiredCostAmount    int64
-	AcquiredAt            time.Time
-	CreatedAt             time.Time
-	UpdatedAt             time.Time
+	AcquiredCostAmount     int64
+	AcquiredAt             time.Time
+	CreatedAt              time.Time
+	UpdatedAt              time.Time
 }
 
 type Order struct {
@@ -87,34 +91,34 @@ type Order struct {
 }
 
 type Payment struct {
-	ID                int64
-	OrderID           int64
-	ProviderName      string
-	ProviderPaymentID string
+	ID                 int64
+	OrderID            int64
+	ProviderName       string
+	ProviderPaymentID  string
 	ProviderCheckoutID string
-	Status            string
-	Amount            int64
-	CurrencyCode      string
-	FailureCode       string
-	FailureMessage    string
-	CapturedAt        *time.Time
-	CreatedAt         time.Time
-	UpdatedAt         time.Time
+	Status             string
+	Amount             int64
+	CurrencyCode       string
+	FailureCode        string
+	FailureMessage     string
+	CapturedAt         *time.Time
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
 }
 
 type CouponDelivery struct {
-	ID                 int64
-	OrderID            int64
-	CouponID           int64
-	DeliveryChannel    string
-	Status             string
-	TelegramMessageID  *int64
+	ID                  int64
+	OrderID             int64
+	CouponID            int64
+	DeliveryChannel     string
+	Status              string
+	TelegramMessageID   *int64
 	DeliveryPayloadHash string
-	SentAt             *time.Time
-	ConfirmedAt        *time.Time
-	FailureReason      string
-	CreatedAt          time.Time
-	UpdatedAt          time.Time
+	SentAt              *time.Time
+	ConfirmedAt         *time.Time
+	FailureReason       string
+	CreatedAt           time.Time
+	UpdatedAt           time.Time
 }
 
 type SupportCase struct {
@@ -142,4 +146,102 @@ type AdminAction struct {
 	AfterStateJSON  string
 	ReasonText      string
 	CreatedAt       time.Time
+}
+
+type CreateCouponSourceParams struct {
+	SourceName        string
+	SourceType        string
+	ContactReference  string
+	RightsStatus      string
+	VerificationNotes string
+	RiskRating        string
+	IsActive          *bool
+}
+
+type CreateListingParams struct {
+	MerchantName            string
+	Title                   string
+	Description             string
+	CouponValueAmount       int64
+	SalePriceAmount         int64
+	CurrencyCode            string
+	ExpirySummary           string
+	TermsSummary            string
+	RedemptionInstructions  string
+	FinalSaleDisclosureText string
+	Status                  string
+	CreatedByAdminID        string
+	PublishedAt             *time.Time
+}
+
+type CouponInventoryInput struct {
+	SourceID               int64
+	MerchantName           string
+	CouponTitle            string
+	CouponValueAmount      int64
+	SalePriceAmount        int64
+	CurrencyCode           string
+	CouponCodeCiphertext   []byte
+	CouponCodeNonce        []byte
+	CouponMaskedDisplay    string
+	ExpiryAt               time.Time
+	TransferabilityStatus  string
+	RightsVerifiedAt       *time.Time
+	RightsVerificationNote string
+	AcquiredCostAmount     int64
+	AcquiredAt             *time.Time
+}
+
+type IngestCouponsParams struct {
+	ListingID int64
+	Coupons   []CouponInventoryInput
+}
+
+type CreateDraftOrderParams struct {
+	UserID                  int64
+	ListingID               int64
+	OrderNumber             string
+	FinalSaleAcknowledgedAt time.Time
+}
+
+type MarkOrderPendingPaymentParams struct {
+	OrderID                   int64
+	ProviderCheckoutReference string
+}
+
+type RecordPaymentEventParams struct {
+	OrderID            int64
+	ProviderName       string
+	ProviderPaymentID  string
+	ProviderCheckoutID string
+	Status             string
+	Amount             int64
+	CurrencyCode       string
+	FailureCode        string
+	FailureMessage     string
+	CapturedAt         *time.Time
+}
+
+type RecordDeliveryEventParams struct {
+	OrderID             int64
+	CouponID            int64
+	DeliveryChannel     string
+	Status              string
+	TelegramMessageID   *int64
+	DeliveryPayloadHash string
+	SentAt              *time.Time
+	ConfirmedAt         *time.Time
+	FailureReason       string
+}
+
+type CreateSupportCaseParams struct {
+	UserID          *int64
+	OrderID         *int64
+	CouponID        *int64
+	CaseType        string
+	Status          string
+	Priority        string
+	Summary         string
+	ResolutionNote  string
+	AssignedAdminID string
 }
