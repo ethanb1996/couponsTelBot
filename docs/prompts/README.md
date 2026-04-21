@@ -6,11 +6,12 @@ Use the files in this order:
 
 1. `00_source_of_truth.md`
 2. `01_scaffold_single_service.md`
-3. `02_schema_inventory_orders.md`
-4. `03_admin_inventory_ops.md`
-5. `04_bot_sales_flow.md`
-6. `05_payments_delivery.md`
-7. `06_ops_hardening_launch.md`
+3. `01b_supabase_database_integration.md`
+4. `02_schema_inventory_orders.md`
+5. `03_admin_inventory_ops.md`
+6. `04_bot_sales_flow.md`
+7. `05_payments_delivery.md`
+8. `06_ops_hardening_launch.md`
 
 ## Why This Prompt Pack Exists
 The repo contains product and architecture thinking from several iterations. This prompt pack intentionally removes the extra branches and keeps only the smallest viable Go implementation needed to start selling.
