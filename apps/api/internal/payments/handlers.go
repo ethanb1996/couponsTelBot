@@ -8,9 +8,9 @@ import (
 )
 
 type WebhookHandler struct {
-	logger          *slog.Logger
+	logger           *slog.Logger
 	expectedProvider string
-	secret          string
+	secret           string
 }
 
 func NewWebhookHandler(logger *slog.Logger, expectedProvider string, secret string) *WebhookHandler {
@@ -28,7 +28,7 @@ func (h *WebhookHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	provider := strings.TrimPrefix(r.URL.Path, "/webhooks/payments/")
-	if provider == "" || provider == "/" {
+	if provider == "" || provider == "/" || strings.Contains(provider, "/") {
 		http.NotFound(w, r)
 		return
 	}

@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>{{.Title}}</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 2rem auto; max-width: 960px; line-height: 1.5; color: #1f2937; }
+    nav a { margin-right: 1rem; }
+    .card { border: 1px solid #d1d5db; border-radius: 8px; padding: 1rem; margin-top: 1rem; }
+  </style>
+</head>
+<body>
+  <nav>
+    <a href="/admin/">Dashboard</a>
+    <a href="/admin/listings">Listings</a>
+    <a href="/admin/orders">Orders</a>
+  </nav>
+
+  <h1>{{.Title}}</h1>
+  <div class="card">
+    <ul>
+      {{range .Notes}}
+      <li>{{.}}</li>
+      {{end}}
+    </ul>
+  </div>
+</body>
+</html>

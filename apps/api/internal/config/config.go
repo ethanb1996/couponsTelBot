@@ -40,21 +40,24 @@ func Load() (Config, error) {
 
 	var missing []string
 
-	required := map[string]string{
-		"DATABASE_URL":                  cfg.DatabaseURL,
-		"TELEGRAM_BOT_TOKEN":            cfg.TelegramBotToken,
-		"TELEGRAM_WEBHOOK_SECRET":       cfg.TelegramWebhookSecret,
-		"PAYMENT_PROVIDER_NAME":         cfg.PaymentProviderName,
-		"PAYMENT_PROVIDER_SECRET":       cfg.PaymentProviderSecret,
-		"PAYMENT_PROVIDER_WEBHOOK_SECRET": cfg.PaymentProviderWebhookSecret,
-		"ADMIN_BASIC_AUTH_USER":         cfg.AdminBasicAuthUser,
-		"ADMIN_BASIC_AUTH_PASS":         cfg.AdminBasicAuthPass,
-		"COUPON_ENCRYPTION_KEY":         cfg.CouponEncryptionKey,
+	required := []struct {
+		key   string
+		value string
+	}{
+		{key: "DATABASE_URL", value: cfg.DatabaseURL},
+		{key: "TELEGRAM_BOT_TOKEN", value: cfg.TelegramBotToken},
+		{key: "TELEGRAM_WEBHOOK_SECRET", value: cfg.TelegramWebhookSecret},
+		{key: "PAYMENT_PROVIDER_NAME", value: cfg.PaymentProviderName},
+		{key: "PAYMENT_PROVIDER_SECRET", value: cfg.PaymentProviderSecret},
+		{key: "PAYMENT_PROVIDER_WEBHOOK_SECRET", value: cfg.PaymentProviderWebhookSecret},
+		{key: "ADMIN_BASIC_AUTH_USER", value: cfg.AdminBasicAuthUser},
+		{key: "ADMIN_BASIC_AUTH_PASS", value: cfg.AdminBasicAuthPass},
+		{key: "COUPON_ENCRYPTION_KEY", value: cfg.CouponEncryptionKey},
 	}
 
-	for key, value := range required {
-		if value == "" {
-			missing = append(missing, key)
+	for _, requiredEnv := range required {
+		if requiredEnv.value == "" {
+			missing = append(missing, requiredEnv.key)
 		}
 	}
 

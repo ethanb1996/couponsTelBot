@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/ethanb1996/couponsTelBot/apps/api/internal/store"
+	admintemplates "github.com/ethanb1996/couponsTelBot/apps/api/templates"
 )
 
 type Handler struct {
@@ -25,7 +26,7 @@ type pageData struct {
 }
 
 func NewHandler(logger *slog.Logger, db *store.Postgres) (*Handler, error) {
-	parsed, err := template.ParseFS(templatesFS, "templates/*.html")
+	parsed, err := template.ParseFS(admintemplates.FS, "*.html")
 	if err != nil {
 		return nil, err
 	}
