@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>{{.Title}}</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 2rem auto; max-width: 1180px; line-height: 1.5; color: #1f2937; }
+    nav a { margin-right: 1rem; }
+    .card { border: 1px solid #d1d5db; border-radius: 8px; padding: 1rem; margin-top: 1rem; }
+    .filters { display: flex; gap: 1rem; align-items: end; flex-wrap: wrap; }
+    .field { min-width: 220px; }
+    label { display: block; font-weight: 600; margin-bottom: .25rem; }
+    select { width: 100%; padding: .5rem; }
+    table { width: 100%; border-collapse: collapse; margin-top: 1rem; }
+    th, td { border-bottom: 1px solid #e5e7eb; text-align: left; padding: .5rem; vertical-align: top; }
+    .muted { color: #6b7280; }
+    .notice { padding: .75rem 1rem; border-radius: 8px; margin: 1rem 0; }
+    .error { background: #fef2f2; color: #991b1b; }
+    .success { background: #ecfdf5; color: #065f46; }
+    .actions form { display: inline-block; margin-right: .35rem; }
+  </style>
+</head>
+<body>
+  <nav>
+    <a href="/admin/">Dashboard</a>
+    <a href="/admin/sources">Sources</a>
+    <a href="/admin/listings">Listings</a>
+    <a href="/admin/coupons">Coupons</a>
+    <a href="/admin/orders">Orders</a>
+    <a href="/admin/support">Support</a>
+  </nav>
+
+  <h1>{{.Title}}</h1>
+  {{if .ErrorMessage}}<div class="notice error">{{.ErrorMessage}}</div>{{end}}
+  {{if .SuccessMessage}}<div class="notice success">{{.SuccessMessage}}</div>{{end}}
+
+  <div class="card">
+    <form method="get" action="/admin/coupons" class="filters">
+      <div class="field">
+        <label>Listing</label>
+        <select name="listing_id">
+          <option value="">All listings</option>
+          {{range .Listings}}<option value="{{.ID}}" {{if eq $.SelectedListingID .ID}}selected{{end}}>{{.Title}}</option>{{end}}
+        </select>
+      </div>
+      <div class="field">
+        <label>Status</label>
+        <select name="status">
+          <option value="">All statuses</option>
+          {{range .CouponStatuses}}<option value="{{.}}" {{if eq $.SelectedStatus .}}selected{{end}}>{{.}}</option>{{end}}
+        </select>
+      </div>
+      <div class="field">
+        <button type="submit">Apply Filter</button>
+      </div>
+    </form>
+
+    <table>
+      <thead>
+        <tr>
+          <th>Coupon</th>
+          <th>Listing</th>
+          <th>Status</th>
+          <th>Expiry</th>
+          <th>Assigned</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{range .Coupons}}
+        <tr>
+          <td>{{.CouponMaskedDisplay}}<br><span class="muted">{{.SourceName}}</span></td>
+          <td><a href="/admin/listings/{{.ListingID}}">{{.ListingTitle}}</a></td>
+          <td>{{.InventoryStatus}}</td>
+          <td>{{.ExpiryAt}}</td>
+          <td>{{if .AssignedOrderID}}<a href="/admin/orders/{{.AssignedOrderID}}">{{.AssignedOrderStatus}}</a>{{else}}unassigned{{end}}</td>
+          <td class="actions">
+            <form method="post" action="/admin/coupons">
+              <input type="hidden" name="coupon_id" value="{{.ID}}">
+              <input type="hidden" name="action" value="mark_voided">
+              <button type="submit">Void</button>
+            </form>
+            <form method="post" action="/admin/coupons">
+              <input type="hidden" name="coupon_id" value="{{.ID}}">
+              <input type="hidden" name="action" value="mark_disputed">
+              <button type="submit">Dispute</button>
+            </form>
+            <form method="post" action="/admin/coupons">
+              <input type="hidden" name="coupon_id" value="{{.ID}}">
+              <input type="hidden" name="action" value="mark_available">
+              <button type="submit">Available</button>
+            </form>
+          </td>
+        </tr>
+        {{else}}
+        <tr><td colspan="6">No coupons found.</td></tr>
+        {{end}}
+      </tbody>
+    </table>
+  </div>
+</body>
+</html>

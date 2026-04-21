@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>{{.Title}}</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 2rem auto; max-width: 1180px; line-height: 1.5; color: #1f2937; }
+    nav a { margin-right: 1rem; }
+    .grid { display: grid; grid-template-columns: 1fr 1.1fr; gap: 1rem; align-items: start; }
+    .card { border: 1px solid #d1d5db; border-radius: 8px; padding: 1rem; margin-top: 1rem; }
+    .field { margin-bottom: .75rem; }
+    label { display: block; font-weight: 600; margin-bottom: .25rem; }
+    input, textarea, select { width: 100%; box-sizing: border-box; padding: .5rem; }
+    textarea { min-height: 100px; }
+    table { width: 100%; border-collapse: collapse; margin-top: 1rem; }
+    th, td { border-bottom: 1px solid #e5e7eb; text-align: left; padding: .5rem; vertical-align: top; }
+    .muted { color: #6b7280; }
+    .notice { padding: .75rem 1rem; border-radius: 8px; margin: 1rem 0; }
+    .error { background: #fef2f2; color: #991b1b; }
+    .success { background: #ecfdf5; color: #065f46; }
+  </style>
+</head>
+<body>
+  <nav>
+    <a href="/admin/">Dashboard</a>
+    <a href="/admin/sources">Sources</a>
+    <a href="/admin/listings">Listings</a>
+    <a href="/admin/coupons">Coupons</a>
+    <a href="/admin/orders">Orders</a>
+    <a href="/admin/support">Support</a>
+  </nav>
+
+  <h1>{{.Title}}</h1>
+  {{if .ErrorMessage}}<div class="notice error">{{.ErrorMessage}}</div>{{end}}
+  {{if .SuccessMessage}}<div class="notice success">{{.SuccessMessage}}</div>{{end}}
+
+  <div class="grid">
+    <div class="card">
+      <h2>Create Support Case</h2>
+      <form method="post" action="/admin/support">
+        <div class="field"><label>User ID</label><input name="user_id" value="{{.FormUserID}}"></div>
+        <div class="field"><label>Order ID</label><input name="order_id" value="{{.FormOrderID}}"></div>
+        <div class="field"><label>Coupon ID</label><input name="coupon_id" value="{{.FormCouponID}}"></div>
+        <div class="field">
+          <label>Case Type</label>
+          <select name="case_type">{{range .CaseTypes}}<option value="{{.}}">{{.}}</option>{{end}}</select>
+        </div>
+        <div class="field">
+          <label>Priority</label>
+          <select name="priority">{{range .SupportPriorities}}<option value="{{.}}">{{.}}</option>{{end}}</select>
+        </div>
+        <div class="field"><label>Summary</label><textarea name="summary" required></textarea></div>
+        <button type="submit">Create Case</button>
+      </form>
+    </div>
+
+    <div class="card">
+      <h2>Support Queue</h2>
+      <form method="get" action="/admin/support">
+        <div class="field">
+          <label>Status Filter</label>
+          <select name="status">
+            <option value="">All statuses</option>
+            {{range .SupportStatuses}}<option value="{{.}}" {{if eq $.SelectedStatus .}}selected{{end}}>{{.}}</option>{{end}}
+          </select>
+        </div>
+        <button type="submit">Apply Filter</button>
+      </form>
+
+      <table>
+        <thead>
+          <tr>
+            <th>Case</th>
+            <th>Status</th>
+            <th>Order</th>
+          </tr>
+        </thead>
+        <tbody>
+          {{range .SupportCases}}
+          <tr>
+            <td><a href="/admin/support/{{.ID}}">{{.Summary}}</a><br><span class="muted">{{.CaseType}}</span></td>
+            <td>{{.Status}}<br><span class="muted">{{.Priority}}</span></td>
+            <td>{{if .OrderID}}{{.OrderID}}{{else}}-{{end}}<br><span class="muted">{{.OrderStatus}}</span></td>
+          </tr>
+          {{else}}
+          <tr><td colspan="3">No support cases found.</td></tr>
+          {{end}}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</body>
+</html>

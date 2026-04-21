@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>{{.Title}}</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 2rem auto; max-width: 880px; line-height: 1.5; color: #1f2937; }
+    nav a { margin-right: 1rem; }
+    .card { border: 1px solid #d1d5db; border-radius: 8px; padding: 1rem; margin-top: 1rem; }
+    .field { margin-bottom: .75rem; }
+    label { display: block; font-weight: 600; margin-bottom: .25rem; }
+    textarea { width: 100%; min-height: 120px; box-sizing: border-box; padding: .5rem; }
+    .notice { padding: .75rem 1rem; border-radius: 8px; margin: 1rem 0; }
+    .error { background: #fef2f2; color: #991b1b; }
+    .success { background: #ecfdf5; color: #065f46; }
+    .muted { color: #6b7280; }
+  </style>
+</head>
+<body>
+  <nav>
+    <a href="/admin/">Dashboard</a>
+    <a href="/admin/sources">Sources</a>
+    <a href="/admin/listings">Listings</a>
+    <a href="/admin/coupons">Coupons</a>
+    <a href="/admin/orders">Orders</a>
+    <a href="/admin/support">Support</a>
+  </nav>
+
+  <h1>Support Case #{{.SupportCase.ID}}</h1>
+  {{if .ErrorMessage}}<div class="notice error">{{.ErrorMessage}}</div>{{end}}
+  {{if .SuccessMessage}}<div class="notice success">{{.SuccessMessage}}</div>{{end}}
+
+  <div class="card">
+    <p><strong>Summary:</strong> {{.SupportCase.Summary}}</p>
+    <p><strong>Status:</strong> {{.SupportCase.Status}}</p>
+    <p><strong>Priority:</strong> {{.SupportCase.Priority}}</p>
+    <p><strong>Order:</strong> {{if .SupportCase.OrderID}}{{.SupportCase.OrderID}}{{else}}-{{end}} <span class="muted">{{.SupportCase.OrderStatus}}</span></p>
+    <p><strong>Coupon:</strong> {{if .SupportCase.CouponID}}{{.SupportCase.CouponID}}{{else}}-{{end}} <span class="muted">{{.SupportCase.CouponStatus}}</span></p>
+    <p><strong>Listing:</strong> {{.SupportCase.ListingTitle}}</p>
+    <p><strong>User:</strong> {{.SupportCase.UserDisplayName}}</p>
+    <p><strong>Resolution Note:</strong> {{if .SupportCase.ResolutionNote}}{{.SupportCase.ResolutionNote}}{{else}}none yet{{end}}</p>
+  </div>
+
+  <div class="card">
+    <h2>Resolve Case</h2>
+    <form method="post">
+      <div class="field">
+        <label>Resolution Note</label>
+        <textarea name="resolution_note" required></textarea>
+      </div>
+      <button type="submit">Mark Resolved</button>
+    </form>
+  </div>
+</body>
+</html>

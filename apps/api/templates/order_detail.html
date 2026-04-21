@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>{{.Title}}</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 2rem auto; max-width: 1120px; line-height: 1.5; color: #1f2937; }
+    nav a { margin-right: 1rem; }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; align-items: start; }
+    .card { border: 1px solid #d1d5db; border-radius: 8px; padding: 1rem; margin-top: 1rem; }
+    table { width: 100%; border-collapse: collapse; margin-top: 1rem; }
+    th, td { border-bottom: 1px solid #e5e7eb; text-align: left; padding: .5rem; vertical-align: top; }
+    .muted { color: #6b7280; }
+    .notice { padding: .75rem 1rem; border-radius: 8px; margin: 1rem 0; }
+    .error { background: #fef2f2; color: #991b1b; }
+    .success { background: #ecfdf5; color: #065f46; }
+  </style>
+</head>
+<body>
+  <nav>
+    <a href="/admin/">Dashboard</a>
+    <a href="/admin/sources">Sources</a>
+    <a href="/admin/listings">Listings</a>
+    <a href="/admin/coupons">Coupons</a>
+    <a href="/admin/orders">Orders</a>
+    <a href="/admin/support">Support</a>
+  </nav>
+
+  <h1>{{.Order.OrderNumber}}</h1>
+  <p class="muted">Status {{.Order.Status}} · user {{.Order.UserDisplayName}} · listing {{.Order.ListingID}}</p>
+
+  {{if .ErrorMessage}}<div class="notice error">{{.ErrorMessage}}</div>{{end}}
+  {{if .SuccessMessage}}<div class="notice success">{{.SuccessMessage}}</div>{{end}}
+
+  <div class="grid">
+    <div class="card">
+      <h2>Order Summary</h2>
+      <p><strong>Telegram:</strong> @{{.Order.TelegramUsername}} ({{.Order.TelegramUserID}})</p>
+      <p><strong>Sale Price:</strong> {{.Order.SalePriceAmount}} {{.Order.CurrencyCode}}</p>
+      <p><strong>Checkout Ref:</strong> {{.Order.ProviderCheckoutReference}}</p>
+      <p><strong>Assigned Coupon:</strong> {{if .Order.AssignedCouponMaskedDisplay}}{{.Order.AssignedCouponMaskedDisplay}}{{else}}unassigned{{end}}</p>
+      <p><strong>Delivery:</strong> {{if .Order.DeliveryStatus}}{{.Order.DeliveryStatus}}{{else}}none{{end}}</p>
+      <p><a href="/admin/support?order_id={{.FormOrderID}}{{if .FormCouponID}}&coupon_id={{.FormCouponID}}{{end}}&user_id={{.FormUserID}}">Create support case from this order</a></p>
+    </div>
+
+    <div class="card">
+      <h2>Payments</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Provider</th>
+            <th>Status</th>
+            <th>Captured</th>
+          </tr>
+        </thead>
+        <tbody>
+          {{range .Payments}}
+          <tr>
+            <td>{{.ProviderName}}</td>
+            <td>{{.Status}}</td>
+            <td>{{if .CapturedAt}}{{.CapturedAt}}{{else}}-{{end}}</td>
+          </tr>
+          {{else}}
+          <tr><td colspan="3">No payment events recorded.</td></tr>
+          {{end}}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Delivery Evidence</h2>
+    {{if .Delivery}}
+    <p><strong>Status:</strong> {{.Delivery.Status}}</p>
+    <p><strong>Channel:</strong> {{.Delivery.DeliveryChannel}}</p>
+    <p><strong>Telegram Message ID:</strong> {{if .Delivery.TelegramMessageID}}{{.Delivery.TelegramMessageID}}{{else}}-{{end}}</p>
+    <p><strong>Sent At:</strong> {{if .Delivery.SentAt}}{{.Delivery.SentAt}}{{else}}-{{end}}</p>
+    <p><strong>Confirmed At:</strong> {{if .Delivery.ConfirmedAt}}{{.Delivery.ConfirmedAt}}{{else}}-{{end}}</p>
+    {{else}}
+    <p>No delivery record yet.</p>
+    {{end}}
+  </div>
+</body>
+</html>

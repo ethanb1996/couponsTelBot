@@ -4,34 +4,71 @@
   <meta charset="utf-8">
   <title>{{.Title}}</title>
   <style>
-    body { font-family: Arial, sans-serif; margin: 2rem auto; max-width: 960px; line-height: 1.5; color: #1f2937; }
+    body { font-family: Arial, sans-serif; margin: 2rem auto; max-width: 1120px; line-height: 1.5; color: #1f2937; }
+    nav { margin-bottom: 1.5rem; }
     nav a { margin-right: 1rem; }
-    .card { border: 1px solid #d1d5db; border-radius: 8px; padding: 1rem; margin-top: 1rem; }
+    .grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1rem; }
+    .card { border: 1px solid #d1d5db; border-radius: 10px; padding: 1rem; margin-top: 1rem; background: #fff; }
     .muted { color: #6b7280; }
+    .notice { padding: .75rem 1rem; border-radius: 8px; margin: 1rem 0; }
+    .error { background: #fef2f2; color: #991b1b; }
+    .success { background: #ecfdf5; color: #065f46; }
   </style>
 </head>
 <body>
   <nav>
     <a href="/admin/">Dashboard</a>
+    <a href="/admin/sources">Sources</a>
     <a href="/admin/listings">Listings</a>
+    <a href="/admin/coupons">Coupons</a>
     <a href="/admin/orders">Orders</a>
+    <a href="/admin/support">Support</a>
   </nav>
 
   <h1>{{.Title}}</h1>
-  <p class="muted">Minimal embedded admin for the coupon sales MVP.</p>
+  <p class="muted">Small-team operations live directly inside the Go service.</p>
 
-  <div class="card">
-    <strong>Database connected:</strong> {{if .DatabaseOK}}yes{{else}}no{{end}}<br>
-    <strong>Rendered at:</strong> {{.Now}}
+  {{if .ErrorMessage}}<div class="notice error">{{.ErrorMessage}}</div>{{end}}
+  {{if .SuccessMessage}}<div class="notice success">{{.SuccessMessage}}</div>{{end}}
+
+  <div class="grid">
+    <div class="card">
+      <strong>Coupon sources</strong>
+      <div>{{.Dashboard.SourceCount}}</div>
+    </div>
+    <div class="card">
+      <strong>Listings</strong>
+      <div>{{.Dashboard.ListingCount}} total / {{.Dashboard.ActiveListingCount}} active</div>
+    </div>
+    <div class="card">
+      <strong>Available coupons</strong>
+      <div>{{.Dashboard.AvailableCouponCount}}</div>
+    </div>
+    <div class="card">
+      <strong>Recent orders</strong>
+      <div>{{.Dashboard.RecentOrderCount}}</div>
+    </div>
+    <div class="card">
+      <strong>Open support cases</strong>
+      <div>{{.Dashboard.OpenSupportCount}}</div>
+    </div>
+    <div class="card">
+      <strong>Database connected</strong>
+      <div>{{if .DatabaseOK}}yes{{else}}no{{end}}</div>
+    </div>
   </div>
 
   <div class="card">
-    <h2>Source Of Truth</h2>
+    <h2>Operator Shortcuts</h2>
     <ul>
-      {{range .Notes}}
-      <li>{{.}}</li>
-      {{end}}
+      <li><a href="/admin/sources">Create or edit coupon sources</a></li>
+      <li><a href="/admin/listings">Create a listing and inspect inventory counts</a></li>
+      <li><a href="/admin/coupons">Review coupon inventory and void/dispute rows</a></li>
+      <li><a href="/admin/orders">Inspect assigned coupons, payment, and delivery</a></li>
+      <li><a href="/admin/support">Log and resolve support cases</a></li>
     </ul>
   </div>
+
+  <p class="muted">Rendered at {{.Now}}</p>
 </body>
 </html>

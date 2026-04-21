@@ -12,78 +12,122 @@ import (
 )
 
 type Handler struct {
-	logger    *slog.Logger
-	store     *store.Postgres
-	templates *template.Template
+	logger              *slog.Logger
+	store               *store.Postgres
+	templates           *template.Template
+	couponEncryptionKey string
 }
 
 type pageData struct {
-	Title       string
-	CurrentPath string
-	Now         time.Time
-	DatabaseOK  bool
-	Notes       []string
+	Title             string
+	CurrentPath       string
+	Now               time.Time
+	DatabaseOK        bool
+	ErrorMessage      string
+	SuccessMessage    string
+	SourceTypes       []string
+	RightsStatuses    []string
+	RiskRatings       []string
+	ListingStatuses   []string
+	CouponStatuses    []string
+	OrderStatuses     []string
+	SupportStatuses   []string
+	SupportPriorities []string
+	CaseTypes         []string
+	TransferStatuses  []string
+	SelectedStatus    string
+	SelectedListingID int64
+	Dashboard         dashboardView
+	Sources           []store.CouponSource
+	Source            *store.CouponSource
+	Listings          []store.ListingInventorySummary
+	Listing           *store.ListingInventorySummary
+	Coupons           []store.CouponAdminSummary
+	Orders            []store.OrderAdminSummary
+	Order             *store.OrderAdminSummary
+	Payments          []store.Payment
+	Delivery          *store.CouponDelivery
+	SupportCases      []store.SupportCaseSummary
+	SupportCase       *store.SupportCaseSummary
+	ImportExample     string
+	FormOrderID       string
+	FormCouponID      string
+	FormUserID        string
 }
 
-func NewHandler(logger *slog.Logger, db *store.Postgres) (*Handler, error) {
+type dashboardView struct {
+	SourceCount          int
+	ListingCount         int
+	ActiveListingCount   int
+	AvailableCouponCount int64
+	RecentOrderCount     int
+	OpenSupportCount     int
+}
+
+func NewHandler(logger *slog.Logger, db *store.Postgres, couponEncryptionKey string) (*Handler, error) {
 	parsed, err := template.ParseFS(admintemplates.FS, "*.html")
 	if err != nil {
 		return nil, err
 	}
 
 	return &Handler{
-		logger:    logger,
-		store:     db,
-		templates: parsed,
+		logger:              logger,
+		store:               db,
+		templates:           parsed,
+		couponEncryptionKey: couponEncryptionKey,
 	}, nil
 }
 
 func (h *Handler) Route(w http.ResponseWriter, r *http.Request) {
-	switch strings.TrimSuffix(r.URL.Path, "/") {
-	case "/admin", "":
+	path := strings.TrimSuffix(r.URL.Path, "/")
+	if path == "" {
+		path = "/admin"
+	}
+
+	switch {
+	case path == "/admin":
 		h.dashboard(w, r)
-	case "/admin/listings":
+	case path == "/admin/sources":
+		h.sources(w, r)
+	case strings.HasPrefix(path, "/admin/sources/"):
+		h.sourceDetail(w, r, path)
+	case path == "/admin/listings":
 		h.listings(w, r)
-	case "/admin/orders":
+	case strings.HasPrefix(path, "/admin/listings/"):
+		h.listingDetail(w, r, path)
+	case path == "/admin/coupons":
+		h.coupons(w, r)
+	case path == "/admin/orders":
 		h.orders(w, r)
+	case strings.HasPrefix(path, "/admin/orders/"):
+		h.orderDetail(w, r, path)
+	case path == "/admin/support":
+		h.support(w, r)
+	case strings.HasPrefix(path, "/admin/support/"):
+		h.supportDetail(w, r, path)
 	default:
 		http.NotFound(w, r)
 	}
 }
 
-func (h *Handler) dashboard(w http.ResponseWriter, r *http.Request) {
-	data := h.basePageData("Admin Dashboard", r.URL.Path, []string{
-		"This admin is intentionally small and embedded in the Go service.",
-		"Use it to anchor inventory, listing, order, payment, and support workflows.",
-	})
-	h.render(w, "dashboard.html", data)
-}
-
-func (h *Handler) listings(w http.ResponseWriter, r *http.Request) {
-	data := h.basePageData("Listings", r.URL.Path, []string{
-		"Listings represent sellable Telegram SKUs.",
-		"One listing can have many owned coupons behind it.",
-		"Publishing and pause actions belong here in the next step.",
-	})
-	h.render(w, "listings.html", data)
-}
-
-func (h *Handler) orders(w http.ResponseWriter, r *http.Request) {
-	data := h.basePageData("Orders", r.URL.Path, []string{
-		"Orders are created when a user presses Buy for one selected coupon option.",
-		"Payment and delivery evidence should be visible here in later steps.",
-	})
-	h.render(w, "orders.html", data)
-}
-
-func (h *Handler) basePageData(title, path string, notes []string) pageData {
-	databaseOK := h.store != nil
+func (h *Handler) basePageData(title, path string, r *http.Request) pageData {
 	return pageData{
-		Title:       title,
-		CurrentPath: path,
-		Now:         time.Now().UTC(),
-		DatabaseOK:  databaseOK,
-		Notes:       notes,
+		Title:             title,
+		CurrentPath:       path,
+		Now:               time.Now().UTC(),
+		DatabaseOK:        h.store != nil,
+		ErrorMessage:      strings.TrimSpace(r.URL.Query().Get("error")),
+		SuccessMessage:    strings.TrimSpace(r.URL.Query().Get("success")),
+		SourceTypes:       []string{"merchant_partner", "reseller", "licensed_distributor", "manual_source"},
+		RightsStatuses:    []string{"unknown", "review_pending", "approved", "restricted", "rejected"},
+		RiskRatings:       []string{"low", "medium", "high"},
+		ListingStatuses:   []string{"draft", "active", "paused", "sold_out", "expired", "removed"},
+		CouponStatuses:    []string{"available", "assigned", "delivered", "expired", "voided", "disputed"},
+		OrderStatuses:     []string{"draft", "pending_payment", "paid", "delivery_pending", "delivered", "failed", "cancelled", "disputed"},
+		SupportStatuses:   []string{"open", "in_progress", "waiting_on_user", "resolved", "closed"},
+		SupportPriorities: []string{"low", "medium", "high"},
+		CaseTypes:         []string{"invalid_coupon", "delivery_issue", "payment_issue", "chargeback_review", "other"},
+		TransferStatuses:  []string{"unknown", "not_transferable", "transferable_with_review", "transferable"},
 	}
 }
 

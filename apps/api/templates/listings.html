@@ -4,25 +4,111 @@
   <meta charset="utf-8">
   <title>{{.Title}}</title>
   <style>
-    body { font-family: Arial, sans-serif; margin: 2rem auto; max-width: 960px; line-height: 1.5; color: #1f2937; }
+    body { font-family: Arial, sans-serif; margin: 2rem auto; max-width: 1120px; line-height: 1.5; color: #1f2937; }
     nav a { margin-right: 1rem; }
     .card { border: 1px solid #d1d5db; border-radius: 8px; padding: 1rem; margin-top: 1rem; }
+    .grid { display: grid; grid-template-columns: 1.2fr 1fr; gap: 1rem; align-items: start; }
+    .field { margin-bottom: .75rem; }
+    label { display: block; font-weight: 600; margin-bottom: .25rem; }
+    input, textarea, select { width: 100%; box-sizing: border-box; padding: .5rem; }
+    textarea { min-height: 90px; }
+    table { width: 100%; border-collapse: collapse; margin-top: 1rem; }
+    th, td { border-bottom: 1px solid #e5e7eb; text-align: left; padding: .5rem; vertical-align: top; }
+    .muted { color: #6b7280; }
+    .notice { padding: .75rem 1rem; border-radius: 8px; margin: 1rem 0; }
+    .error { background: #fef2f2; color: #991b1b; }
+    .success { background: #ecfdf5; color: #065f46; }
+    button { padding: .6rem 1rem; }
   </style>
 </head>
 <body>
   <nav>
     <a href="/admin/">Dashboard</a>
+    <a href="/admin/sources">Sources</a>
     <a href="/admin/listings">Listings</a>
+    <a href="/admin/coupons">Coupons</a>
     <a href="/admin/orders">Orders</a>
+    <a href="/admin/support">Support</a>
   </nav>
 
   <h1>{{.Title}}</h1>
-  <div class="card">
-    <ul>
-      {{range .Notes}}
-      <li>{{.}}</li>
-      {{end}}
-    </ul>
+  {{if .ErrorMessage}}<div class="notice error">{{.ErrorMessage}}</div>{{end}}
+  {{if .SuccessMessage}}<div class="notice success">{{.SuccessMessage}}</div>{{end}}
+
+  <div class="grid">
+    <div class="card">
+      <h2>Create Listing</h2>
+      <form method="post" action="/admin/listings">
+        <div class="field">
+          <label for="merchant_name">Merchant Name</label>
+          <input id="merchant_name" name="merchant_name" required>
+        </div>
+        <div class="field">
+          <label for="title">Listing Title</label>
+          <input id="title" name="title" required>
+        </div>
+        <div class="field">
+          <label for="description">Description</label>
+          <textarea id="description" name="description"></textarea>
+        </div>
+        <div class="field">
+          <label for="coupon_value_amount">Coupon Value Amount</label>
+          <input id="coupon_value_amount" name="coupon_value_amount" type="number" min="0" required>
+        </div>
+        <div class="field">
+          <label for="sale_price_amount">Sale Price Amount</label>
+          <input id="sale_price_amount" name="sale_price_amount" type="number" min="0" required>
+        </div>
+        <div class="field">
+          <label for="currency_code">Currency</label>
+          <input id="currency_code" name="currency_code" value="ILS">
+        </div>
+        <div class="field">
+          <label for="expiry_summary">Expiry Summary</label>
+          <input id="expiry_summary" name="expiry_summary">
+        </div>
+        <div class="field">
+          <label for="terms_summary">Terms Summary</label>
+          <textarea id="terms_summary" name="terms_summary"></textarea>
+        </div>
+        <div class="field">
+          <label for="redemption_instructions">Redemption Instructions</label>
+          <textarea id="redemption_instructions" name="redemption_instructions"></textarea>
+        </div>
+        <div class="field">
+          <label for="final_sale_disclosure_text">Final Sale Disclosure</label>
+          <textarea id="final_sale_disclosure_text" name="final_sale_disclosure_text" required>All sales are final.</textarea>
+        </div>
+        <button type="submit">Create Listing</button>
+      </form>
+    </div>
+
+    <div class="card">
+      <h2>Listing Inventory</h2>
+      <p class="muted">Create listings here, then open a detail page to publish, pause, or ingest coupons.</p>
+      <table>
+        <thead>
+          <tr>
+            <th>Listing</th>
+            <th>Status</th>
+            <th>Available</th>
+            <th>Total</th>
+          </tr>
+        </thead>
+        <tbody>
+          {{range .Listings}}
+          <tr>
+            <td><a href="/admin/listings/{{.ID}}">{{.Title}}</a><br><span class="muted">{{.MerchantName}}</span></td>
+            <td>{{.Status}}</td>
+            <td>{{.AvailableCoupons}}</td>
+            <td>{{.TotalCoupons}}</td>
+          </tr>
+          {{else}}
+          <tr><td colspan="4">No listings yet.</td></tr>
+          {{end}}
+        </tbody>
+      </table>
+    </div>
   </div>
 </body>
 </html>

@@ -31,7 +31,7 @@ func NewRouter(deps Dependencies) (http.Handler, error) {
 		return nil, errors.New("store is required")
 	}
 
-	adminHandler, err := admin.NewHandler(deps.Logger, deps.Store)
+	adminHandler, err := admin.NewHandler(deps.Logger, deps.Store, deps.Config.CouponEncryptionKey)
 	if err != nil {
 		return nil, err
 	}
