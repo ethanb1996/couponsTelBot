@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
 	"strings"
 	"time"
 
@@ -109,6 +110,35 @@ func buildPoolConfig(options Options) (*pgxpool.Config, error) {
 	return config, nil
 }
 
+func DatabaseConnectionWarnings(databaseURL string, queryExecMode string) []string {
+	parsedURL, err := url.Parse(strings.TrimSpace(databaseURL))
+	if err != nil {
+		return nil
+	}
+
+	host := strings.ToLower(strings.TrimSpace(parsedURL.Hostname()))
+	if host == "" {
+		return nil
+	}
+
+	sslMode := strings.ToLower(strings.TrimSpace(parsedURL.Query().Get("sslmode")))
+	warnings := make([]string, 0, 2)
+
+	if isSupabaseHost(host) && !isStrictSSLMode(sslMode) {
+		warnings = append(warnings, "Supabase hosted Postgres should use sslmode=require or stronger in DATABASE_URL")
+	}
+
+	normalizedQueryExecMode := strings.ToLower(strings.TrimSpace(queryExecMode))
+	if normalizedQueryExecMode == "" {
+		normalizedQueryExecMode = "exec"
+	}
+	if isSupabasePoolerHost(host) && normalizedQueryExecMode != "exec" {
+		warnings = append(warnings, "Supabase pooler connections should use DATABASE_QUERY_EXEC_MODE=exec")
+	}
+
+	return warnings
+}
+
 func queryExecMode(value string) (pgx.QueryExecMode, error) {
 	switch strings.ToLower(strings.TrimSpace(value)) {
 	case "cache_statement":
@@ -123,5 +153,22 @@ func queryExecMode(value string) (pgx.QueryExecMode, error) {
 		return pgx.QueryExecModeSimpleProtocol, nil
 	default:
 		return 0, fmt.Errorf("unsupported query exec mode %q", value)
+	}
+}
+
+func isSupabaseHost(host string) bool {
+	return strings.HasSuffix(host, ".supabase.co") || strings.HasSuffix(host, ".supabase.com")
+}
+
+func isSupabasePoolerHost(host string) bool {
+	return strings.Contains(host, ".pooler.supabase.")
+}
+
+func isStrictSSLMode(sslMode string) bool {
+	switch sslMode {
+	case "require", "verify-ca", "verify-full":
+		return true
+	default:
+		return false
 	}
 }

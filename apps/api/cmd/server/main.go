@@ -30,6 +30,10 @@ func main() {
 		Level: cfg.LogLevel(),
 	}))
 
+	for _, warning := range store.DatabaseConnectionWarnings(cfg.DatabaseURL, cfg.DatabaseQueryExecMode) {
+		logger.Warn("database configuration warning", "warning", warning)
+	}
+
 	db, err := store.Open(ctx, store.Options{
 		DatabaseURL:          cfg.DatabaseURL,
 		ApplicationName:      cfg.DatabaseApplicationName,

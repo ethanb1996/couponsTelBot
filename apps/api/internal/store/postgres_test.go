@@ -80,3 +80,46 @@ func TestBuildPoolConfigRequiresDatabaseURL(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
+
+func TestDatabaseConnectionWarningsForSupabaseHostedSSL(t *testing.T) {
+	warnings := DatabaseConnectionWarnings(
+		"postgres://postgres:secret@db.project-ref.supabase.co:5432/postgres?sslmode=disable",
+		"exec",
+	)
+
+	if len(warnings) != 1 {
+		t.Fatalf("expected one warning, got %d (%v)", len(warnings), warnings)
+	}
+
+	expected := "Supabase hosted Postgres should use sslmode=require or stronger in DATABASE_URL"
+	if warnings[0] != expected {
+		t.Fatalf("unexpected warning\nwant: %s\ngot:  %s", expected, warnings[0])
+	}
+}
+
+func TestDatabaseConnectionWarningsForSupabasePoolerExecMode(t *testing.T) {
+	warnings := DatabaseConnectionWarnings(
+		"postgres://postgres.project-ref:secret@aws-0-eu-central-1.pooler.supabase.com:6543/postgres?sslmode=require",
+		"cache_statement",
+	)
+
+	if len(warnings) != 1 {
+		t.Fatalf("expected one warning, got %d (%v)", len(warnings), warnings)
+	}
+
+	expected := "Supabase pooler connections should use DATABASE_QUERY_EXEC_MODE=exec"
+	if warnings[0] != expected {
+		t.Fatalf("unexpected warning\nwant: %s\ngot:  %s", expected, warnings[0])
+	}
+}
+
+func TestDatabaseConnectionWarningsRemainQuietForLocalPostgres(t *testing.T) {
+	warnings := DatabaseConnectionWarnings(
+		"postgres://postgres:postgres@localhost:5432/coupons?sslmode=disable",
+		"",
+	)
+
+	if len(warnings) != 0 {
+		t.Fatalf("expected no warnings, got %v", warnings)
+	}
+}

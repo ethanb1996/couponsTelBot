@@ -35,6 +35,7 @@ The API accepts a plain PostgreSQL URL and uses `pgxpool` directly. No ORM or Su
 - Use the database only from the Go service.
 - Keep `sslmode=require` on hosted Supabase connection strings.
 - If you use a pooled Supabase connection string, leave `DATABASE_QUERY_EXEC_MODE=exec` so the app does not depend on prepared-statement caches that can conflict with transaction pooling.
+- On startup, the API logs a warning if a Supabase URL is missing strict SSL or if a Supabase pooler URL is paired with a non-`exec` query mode.
 - If you move to another PostgreSQL host later, the same schema, repository code, and `DATABASE_URL` pattern continue to work.
 
 ## Migrations
