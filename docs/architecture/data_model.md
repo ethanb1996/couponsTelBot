@@ -150,6 +150,7 @@ Suggested fields:
 Notes:
 - raw card data should never be stored
 - payment provider remains the source of truth for card handling
+- for the initial PayPal flow, `provider_checkout_id` should carry the PayPal order ID and `provider_payment_id` should carry the PayPal capture ID when available
 
 ## 7. coupon_deliveries
 Represents the act of releasing a coupon to the user after payment.

@@ -1,6 +1,8 @@
 package payments
 
 import (
+	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -10,14 +12,18 @@ import (
 type WebhookHandler struct {
 	logger           *slog.Logger
 	expectedProvider string
-	secret           string
+	service          WebhookProcessor
 }
 
-func NewWebhookHandler(logger *slog.Logger, expectedProvider string, secret string) *WebhookHandler {
+type WebhookProcessor interface {
+	HandleWebhook(ctx context.Context, provider string, headers http.Header, body []byte) error
+}
+
+func NewWebhookHandler(logger *slog.Logger, expectedProvider string, service WebhookProcessor) *WebhookHandler {
 	return &WebhookHandler{
 		logger:           logger,
 		expectedProvider: expectedProvider,
-		secret:           secret,
+		service:          service,
 	}
 }
 
@@ -38,23 +44,35 @@ func (h *WebhookHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if h.secret != "" && r.Header.Get("X-Payment-Webhook-Secret") != h.secret {
-		http.Error(w, http.StatusText(http.StatusUnauthorized), http.StatusUnauthorized)
-		return
-	}
-
 	body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
 	if err != nil {
 		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
 		return
 	}
 
-	h.logger.Info("payment webhook received",
+	if err := h.service.HandleWebhook(r.Context(), provider, r.Header, body); err != nil {
+		statusCode := http.StatusBadRequest
+		switch {
+		case errors.Is(err, ErrWebhookUnauthorized):
+			statusCode = http.StatusUnauthorized
+		case errors.Is(err, ErrUnsupportedProvider):
+			statusCode = http.StatusNotFound
+		}
+
+		h.logger.Error("payment webhook processing failed",
+			"provider", provider,
+			"error", err,
+		)
+		http.Error(w, http.StatusText(statusCode), statusCode)
+		return
+	}
+
+	h.logger.Info("payment webhook processed",
 		"provider", provider,
 		"payload_bytes", len(body),
 	)
 
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusAccepted)
+	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(`{"ok":true}`))
 }

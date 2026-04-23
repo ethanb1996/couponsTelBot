@@ -50,10 +50,11 @@ This provides enough separation for clarity without introducing distributed-syst
 1. User starts the bot and views active coupon listings.
 2. User opens a listing detail view.
 3. User sees sale price, coupon value, expiry, delivery terms, and explicit no-refund policy.
-4. User starts checkout.
-5. Payment provider confirms successful payment in ILS.
-6. Backend assigns one coupon from inventory to the order.
-7. Bot delivers the coupon to the user in Telegram.
+4. User confirms purchase and receives a PayPal checkout link.
+5. User completes payment in PayPal in ILS.
+6. Backend verifies the PayPal webhook and captures the approved PayPal order.
+7. Backend assigns one coupon from inventory to the order.
+8. Bot delivers the coupon to the user in Telegram.
 
 ### Feedback and Issue Handling
 1. User reports an invalid coupon, delivery issue, or payment issue.
@@ -88,7 +89,7 @@ This provides enough separation for clarity without introducing distributed-syst
 
 ### External Dependencies
 - Telegram Bot API
-- payment provider that accepts ILS
+- PayPal as the initial payment provider that accepts ILS
 - analytics/logging stack
 
 Explicitly excluded from MVP architecture:
@@ -172,9 +173,9 @@ Reason:
 
 ### Backend <-> Payment Provider
 Boundary:
-- backend creates payment intents or checkout sessions
-- provider owns card handling and payment processing
-- backend trusts only provider-confirmed payment success for coupon delivery
+- backend creates PayPal checkout orders and approval links
+- PayPal owns card and wallet handling, including card and Apple Pay flows exposed by the merchant account
+- backend verifies PayPal webhooks and trusts only PayPal-confirmed payment success for coupon delivery
 
 Reason:
 - reduces PCI scope
@@ -305,6 +306,7 @@ Impact:
 Mitigation:
 - clear pre-purchase disclosure
 - store delivery evidence
+- store PayPal order and capture references
 - store coupon assignment evidence
 - keep complaint and dispute logs
 

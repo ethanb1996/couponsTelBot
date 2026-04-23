@@ -28,4 +28,8 @@ The MVP starts on Supabase PostgreSQL for managed hosting, but the backend stays
 - SQL migrations remain plain PostgreSQL files
 - the repo does not depend on Supabase Auth, Realtime, Storage, or Edge Functions
 
-See [apps/api/README.md](apps/api/README.md) for local setup, Supabase SSL guidance, migration commands, and optional `DATABASE_*` pool settings.
+## Payments
+
+The initial checkout flow uses PayPal-hosted payment links and verified PayPal webhooks, while still keeping payment state and coupon delivery in the single Go service.
+
+See [apps/api/README.md](apps/api/README.md) for local setup, Supabase SSL guidance, PayPal env vars, webhook setup expectations, migration commands, and optional `DATABASE_*` pool settings.

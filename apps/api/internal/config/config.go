@@ -13,26 +13,28 @@ import (
 )
 
 type Config struct {
-	AppEnv                       string
-	Port                         string
-	AppBaseURL                   string
-	DatabaseURL                  string
-	DatabaseApplicationName      string
-	DatabaseConnectTimeout       time.Duration
-	DatabaseMaxConns             int32
-	DatabaseMinConns             int32
-	DatabaseMaxConnLifetime      time.Duration
-	DatabaseMaxConnIdleTime      time.Duration
-	DatabaseHealthCheckPeriod    time.Duration
-	DatabaseQueryExecMode        string
-	TelegramBotToken             string
-	TelegramWebhookSecret        string
-	PaymentProviderName          string
-	PaymentProviderSecret        string
-	PaymentProviderWebhookSecret string
-	AdminBasicAuthUser           string
-	AdminBasicAuthPass           string
-	CouponEncryptionKey          string
+	AppEnv                    string
+	Port                      string
+	AppBaseURL                string
+	DatabaseURL               string
+	DatabaseApplicationName   string
+	DatabaseConnectTimeout    time.Duration
+	DatabaseMaxConns          int32
+	DatabaseMinConns          int32
+	DatabaseMaxConnLifetime   time.Duration
+	DatabaseMaxConnIdleTime   time.Duration
+	DatabaseHealthCheckPeriod time.Duration
+	DatabaseQueryExecMode     string
+	TelegramBotToken          string
+	TelegramWebhookSecret     string
+	PaymentProviderName       string
+	PaymentProviderClientID   string
+	PaymentProviderSecret     string
+	PaymentProviderBaseURL    string
+	PaymentProviderWebhookID  string
+	AdminBasicAuthUser        string
+	AdminBasicAuthPass        string
+	CouponEncryptionKey       string
 }
 
 func Load() (Config, error) {
@@ -71,26 +73,28 @@ func Load() (Config, error) {
 	}
 
 	cfg := Config{
-		AppEnv:                       envWithDefault("APP_ENV", "development"),
-		Port:                         envWithDefault("PORT", "8080"),
-		AppBaseURL:                   envWithDefault("APP_BASE_URL", "http://localhost:8080"),
-		DatabaseURL:                  strings.TrimSpace(os.Getenv("DATABASE_URL")),
-		DatabaseApplicationName:      envWithDefault("DATABASE_APPLICATION_NAME", "coupons-api"),
-		DatabaseConnectTimeout:       databaseConnectTimeout,
-		DatabaseMaxConns:             databaseMaxConns,
-		DatabaseMinConns:             databaseMinConns,
-		DatabaseMaxConnLifetime:      databaseMaxConnLifetime,
-		DatabaseMaxConnIdleTime:      databaseMaxConnIdleTime,
-		DatabaseHealthCheckPeriod:    databaseHealthCheckPeriod,
-		DatabaseQueryExecMode:        strings.ToLower(envWithDefault("DATABASE_QUERY_EXEC_MODE", "exec")),
-		TelegramBotToken:             strings.TrimSpace(os.Getenv("TELEGRAM_BOT_TOKEN")),
-		TelegramWebhookSecret:        strings.TrimSpace(os.Getenv("TELEGRAM_WEBHOOK_SECRET")),
-		PaymentProviderName:          strings.TrimSpace(os.Getenv("PAYMENT_PROVIDER_NAME")),
-		PaymentProviderSecret:        strings.TrimSpace(os.Getenv("PAYMENT_PROVIDER_SECRET")),
-		PaymentProviderWebhookSecret: strings.TrimSpace(os.Getenv("PAYMENT_PROVIDER_WEBHOOK_SECRET")),
-		AdminBasicAuthUser:           strings.TrimSpace(os.Getenv("ADMIN_BASIC_AUTH_USER")),
-		AdminBasicAuthPass:           strings.TrimSpace(os.Getenv("ADMIN_BASIC_AUTH_PASS")),
-		CouponEncryptionKey:          strings.TrimSpace(os.Getenv("COUPON_ENCRYPTION_KEY")),
+		AppEnv:                    envWithDefault("APP_ENV", "development"),
+		Port:                      envWithDefault("PORT", "8080"),
+		AppBaseURL:                envWithDefault("APP_BASE_URL", "http://localhost:8080"),
+		DatabaseURL:               strings.TrimSpace(os.Getenv("DATABASE_URL")),
+		DatabaseApplicationName:   envWithDefault("DATABASE_APPLICATION_NAME", "coupons-api"),
+		DatabaseConnectTimeout:    databaseConnectTimeout,
+		DatabaseMaxConns:          databaseMaxConns,
+		DatabaseMinConns:          databaseMinConns,
+		DatabaseMaxConnLifetime:   databaseMaxConnLifetime,
+		DatabaseMaxConnIdleTime:   databaseMaxConnIdleTime,
+		DatabaseHealthCheckPeriod: databaseHealthCheckPeriod,
+		DatabaseQueryExecMode:     strings.ToLower(envWithDefault("DATABASE_QUERY_EXEC_MODE", "exec")),
+		TelegramBotToken:          strings.TrimSpace(os.Getenv("TELEGRAM_BOT_TOKEN")),
+		TelegramWebhookSecret:     strings.TrimSpace(os.Getenv("TELEGRAM_WEBHOOK_SECRET")),
+		PaymentProviderName:       strings.TrimSpace(os.Getenv("PAYMENT_PROVIDER_NAME")),
+		PaymentProviderClientID:   strings.TrimSpace(os.Getenv("PAYMENT_PROVIDER_CLIENT_ID")),
+		PaymentProviderSecret:     strings.TrimSpace(os.Getenv("PAYMENT_PROVIDER_SECRET")),
+		PaymentProviderBaseURL:    strings.TrimSpace(os.Getenv("PAYMENT_PROVIDER_BASE_URL")),
+		PaymentProviderWebhookID:  strings.TrimSpace(os.Getenv("PAYMENT_PROVIDER_WEBHOOK_ID")),
+		AdminBasicAuthUser:        strings.TrimSpace(os.Getenv("ADMIN_BASIC_AUTH_USER")),
+		AdminBasicAuthPass:        strings.TrimSpace(os.Getenv("ADMIN_BASIC_AUTH_PASS")),
+		CouponEncryptionKey:       strings.TrimSpace(os.Getenv("COUPON_ENCRYPTION_KEY")),
 	}
 
 	var missing []string
@@ -103,8 +107,10 @@ func Load() (Config, error) {
 		{key: "TELEGRAM_BOT_TOKEN", value: cfg.TelegramBotToken},
 		{key: "TELEGRAM_WEBHOOK_SECRET", value: cfg.TelegramWebhookSecret},
 		{key: "PAYMENT_PROVIDER_NAME", value: cfg.PaymentProviderName},
+		{key: "PAYMENT_PROVIDER_CLIENT_ID", value: cfg.PaymentProviderClientID},
 		{key: "PAYMENT_PROVIDER_SECRET", value: cfg.PaymentProviderSecret},
-		{key: "PAYMENT_PROVIDER_WEBHOOK_SECRET", value: cfg.PaymentProviderWebhookSecret},
+		{key: "PAYMENT_PROVIDER_BASE_URL", value: cfg.PaymentProviderBaseURL},
+		{key: "PAYMENT_PROVIDER_WEBHOOK_ID", value: cfg.PaymentProviderWebhookID},
 		{key: "ADMIN_BASIC_AUTH_USER", value: cfg.AdminBasicAuthUser},
 		{key: "ADMIN_BASIC_AUTH_PASS", value: cfg.AdminBasicAuthPass},
 		{key: "COUPON_ENCRYPTION_KEY", value: cfg.CouponEncryptionKey},
@@ -265,8 +271,17 @@ func validateDatabaseConfig(cfg Config) error {
 
 	switch cfg.DatabaseQueryExecMode {
 	case "", "cache_statement", "cache_describe", "describe_exec", "exec", "simple_protocol":
-		return nil
 	default:
 		return fmt.Errorf("DATABASE_QUERY_EXEC_MODE must be one of: cache_statement, cache_describe, describe_exec, exec, simple_protocol")
 	}
+
+	if cfg.PaymentProviderName != "paypal" {
+		return fmt.Errorf("PAYMENT_PROVIDER_NAME must be paypal")
+	}
+
+	if cfg.PaymentProviderBaseURL != "https://api-m.sandbox.paypal.com" && cfg.PaymentProviderBaseURL != "https://api-m.paypal.com" {
+		return fmt.Errorf("PAYMENT_PROVIDER_BASE_URL must be https://api-m.sandbox.paypal.com or https://api-m.paypal.com")
+	}
+
+	return nil
 }

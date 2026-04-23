@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/ethanb1996/couponsTelBot/apps/api/internal/config"
+	"github.com/ethanb1996/couponsTelBot/apps/api/internal/payments"
 	"github.com/ethanb1996/couponsTelBot/apps/api/internal/store"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
@@ -21,10 +22,15 @@ const (
 )
 
 type BotService struct {
-	logger *slog.Logger
-	store  *store.Postgres
-	botAPI *tgbotapi.BotAPI
-	config *config.Config
+	logger          *slog.Logger
+	store           *store.Postgres
+	botAPI          *tgbotapi.BotAPI
+	config          *config.Config
+	checkoutStarter CheckoutStarter
+}
+
+type CheckoutStarter interface {
+	StartCheckout(ctx context.Context, order store.Order, listing store.Listing) (payments.CheckoutLink, error)
 }
 
 func NewBotService(logger *slog.Logger, repo *store.Postgres, botToken string, cfg *config.Config) (*BotService, error) {
@@ -38,6 +44,10 @@ func NewBotService(logger *slog.Logger, repo *store.Postgres, botToken string, c
 		botAPI: api,
 		config: cfg,
 	}, nil
+}
+
+func (s *BotService) SetCheckoutStarter(checkoutStarter CheckoutStarter) {
+	s.checkoutStarter = checkoutStarter
 }
 
 // HandleUpdate processes incoming Telegram updates
@@ -229,14 +239,23 @@ func (s *BotService) handleViewDetails(ctx context.Context, chatID int64, listin
 
 // handleConfirmBuy creates draft order and initiates checkout
 func (s *BotService) handleConfirmBuy(ctx context.Context, callback *tgbotapi.CallbackQuery, listingID int64) error {
-	// Get user
+	if s.checkoutStarter == nil {
+		s.logger.Error("checkout starter is not configured")
+		return s.sendMessage(ctx, callback.Message.Chat.ID, "Payment is temporarily unavailable. Please try again later.")
+	}
+
 	user, err := s.getOrCreateUser(ctx, callback.From)
 	if err != nil {
 		s.logger.Error("failed to get user", "error", err, "telegram_user_id", callback.From.ID)
 		return nil
 	}
 
-	// Create draft order
+	listing, err := s.store.GetListing(ctx, listingID)
+	if err != nil {
+		s.logger.Error("failed to get listing for checkout", "error", err, "listing_id", listingID)
+		return s.sendMessage(ctx, callback.Message.Chat.ID, "Unable to load this coupon right now. Please try again.")
+	}
+
 	orderNumber := fmt.Sprintf("ORD-%d-%d", callback.From.ID, time.Now().Unix())
 	params := store.CreateDraftOrderParams{
 		UserID:                  user.ID,
@@ -255,15 +274,37 @@ func (s *BotService) handleConfirmBuy(ctx context.Context, callback *tgbotapi.Ca
 		return s.sendMessage(ctx, callback.Message.Chat.ID, msg)
 	}
 
-	// TODO: Initiate payment checkout with payment provider
-	// For now, send checkout link message (placeholder)
-	checkoutText := fmt.Sprintf(`✅ Order created: <b>#%s</b>
+	checkout, err := s.checkoutStarter.StartCheckout(ctx, order, listing)
+	if err != nil {
+		s.logger.Error("failed to start paypal checkout", "error", err, "order_id", order.ID, "listing_id", listingID)
+		return s.sendMessage(ctx, callback.Message.Chat.ID, "We could not start the PayPal checkout. Please try again in a moment.")
+	}
 
-<b>Next step:</b> Complete payment to get your coupon code.
+	checkoutText := fmt.Sprintf(`<b>Order created:</b> %s
 
-<i>Payment link would be sent here.</i>`, order.OrderNumber)
+<b>Coupon:</b> %s - %s
+<b>Amount:</b> %s
 
-	return s.sendMessage(ctx, callback.Message.Chat.ID, checkoutText)
+Tap the PayPal button below to complete payment. We will deliver the coupon in Telegram after PayPal confirms the payment.`,
+		order.OrderNumber,
+		listing.MerchantName,
+		listing.Title,
+		formatPrice(order.SalePriceAmount),
+	)
+
+	msg := tgbotapi.NewMessage(callback.Message.Chat.ID, checkoutText)
+	msg.ParseMode = tgbotapi.ModeHTML
+	msg.ReplyMarkup = tgbotapi.NewInlineKeyboardMarkup(
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonURL("Pay with PayPal", checkout.ApprovalURL),
+		),
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("Support", formatCallbackData(CallbackContactSupport, listing.ID)),
+		),
+	)
+
+	_, err = s.botAPI.Send(msg)
+	return err
 }
 
 // Helper functions
@@ -413,4 +454,14 @@ func (s *BotService) sendMessage(ctx context.Context, chatID int64, text string)
 	msg.ParseMode = tgbotapi.ModeHTML
 	_, err := s.botAPI.Send(msg)
 	return err
+}
+
+func (s *BotService) SendHTMLMessage(ctx context.Context, telegramUserID int64, text string) (int64, error) {
+	msg := tgbotapi.NewMessage(telegramUserID, text)
+	msg.ParseMode = tgbotapi.ModeHTML
+	sent, err := s.botAPI.Send(msg)
+	if err != nil {
+		return 0, err
+	}
+	return int64(sent.MessageID), nil
 }

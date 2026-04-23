@@ -42,11 +42,17 @@ func NewRouter(deps Dependencies) (http.Handler, error) {
 		return nil, err
 	}
 
+	paymentService, err := payments.NewService(deps.Logger, deps.Store, deps.Config, botService)
+	if err != nil {
+		return nil, err
+	}
+	botService.SetCheckoutStarter(paymentService)
+
 	telegramHandler := telegram.NewWebhookHandler(deps.Logger, deps.Config.TelegramWebhookSecret, botService)
 	paymentHandler := payments.NewWebhookHandler(
 		deps.Logger,
 		deps.Config.PaymentProviderName,
-		deps.Config.PaymentProviderWebhookSecret,
+		paymentService,
 	)
 
 	mux := http.NewServeMux()
@@ -57,6 +63,8 @@ func NewRouter(deps Dependencies) (http.Handler, error) {
 	})
 	mux.HandleFunc("/webhooks/telegram", telegramHandler.ServeHTTP)
 	mux.HandleFunc("/webhooks/payments/", paymentHandler.ServeHTTP)
+	mux.HandleFunc("/payments/paypal/return", payments.ReturnPage)
+	mux.HandleFunc("/payments/paypal/cancel", payments.CancelPage)
 
 	return Chain(
 		mux,

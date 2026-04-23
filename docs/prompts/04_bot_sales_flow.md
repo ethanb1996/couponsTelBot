@@ -29,7 +29,7 @@ Pressing one `Buy` button must create an order only for that selected listing.
    - redemption instructions
    - final-sale / no-refund disclosure
 6. User confirms purchase
-7. Bot starts checkout
+7. Bot sends a PayPal checkout link for that specific order
 
 ## Bot Scope
 Implement only what is needed for selling:
@@ -69,4 +69,4 @@ Avoid:
 - bot can send `1` to `3` coupon options per message
 - each coupon option has its own `Buy` button
 - buy callback leads to a purchase detail view
-- confirming purchase creates an order in `pending_payment`
+- confirming purchase creates an order in `pending_payment` and returns a PayPal payment link

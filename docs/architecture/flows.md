@@ -78,10 +78,11 @@ Guardrails:
    - final-sale disclosure
    - explicit statement that no refunds are available
 6. User confirms purchase.
-7. Bot starts payment flow with the ILS-capable payment provider.
-8. System waits for payment confirmation.
-9. On success, system assigns a coupon and sends it to the user in Telegram.
-10. Bot confirms delivery and gives support contact path.
+7. Bot creates a PayPal checkout order and sends the PayPal approval link.
+8. User completes payment in PayPal with a supported funding source.
+9. Backend verifies the PayPal webhook and captures the approved order if needed.
+10. On confirmed capture, system assigns a coupon and sends it to the user in Telegram.
+11. Bot confirms delivery and gives support contact path.
 
 Message rule:
 - every promotional or catalog message from the bot should contain between 1 and 3 coupon options
@@ -180,7 +181,7 @@ Handling:
 ### Duplicate Charge or Chargeback
 Handling:
 - payment issue is logged
-- operator reviews payment-provider evidence
+- operator reviews PayPal order, capture, and delivery evidence
 - case is handled manually because no automated refund path exists
 
 ## Recommended MVP Flow Set

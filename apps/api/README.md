@@ -5,6 +5,7 @@ Single Go service for the coupon sales MVP.
 It owns:
 - Telegram bot webhooks
 - payment webhooks
+- PayPal checkout handoff and verified payment callbacks
 - embedded admin pages
 - inventory, listing, order, payment, and delivery state
 
@@ -28,6 +29,35 @@ Run the service from the repo root so `apps/api` can pick up the shared `.env` f
 3. Fill the remaining app secrets in `.env`.
 
 The API accepts a plain PostgreSQL URL and uses `pgxpool` directly. No ORM or Supabase SDK is required.
+
+## PayPal
+
+The MVP payment flow uses PayPal-hosted checkout links.
+
+- The bot creates an internal order, then requests a PayPal approval link from the backend.
+- Users pay on PayPal with whatever funding sources the merchant account exposes, such as card or wallet.
+- The backend verifies PayPal webhook signatures through PayPal's verification API.
+- Coupon delivery happens only after a verified PayPal success event.
+
+Required payment settings:
+
+- `PAYMENT_PROVIDER_NAME=paypal`
+- `PAYMENT_PROVIDER_CLIENT_ID`
+- `PAYMENT_PROVIDER_SECRET`
+- `PAYMENT_PROVIDER_BASE_URL`
+- `PAYMENT_PROVIDER_WEBHOOK_ID`
+
+PayPal base URL values:
+
+- sandbox: `https://api-m.sandbox.paypal.com`
+- live: `https://api-m.paypal.com`
+
+Webhook expectations:
+
+- subscribe the PayPal webhook to the events needed for hosted checkout fulfillment
+- include at least `CHECKOUT.ORDER.APPROVED` and `PAYMENT.CAPTURE.COMPLETED`
+- point the webhook at `/webhooks/payments/paypal`
+- configure the webhook ID in `PAYMENT_PROVIDER_WEBHOOK_ID`
 
 ## Supabase Notes
 

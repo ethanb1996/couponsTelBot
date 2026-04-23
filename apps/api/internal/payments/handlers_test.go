@@ -1,6 +1,8 @@
 package payments
 
 import (
+	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -8,30 +10,78 @@ import (
 	"testing"
 )
 
-func TestWebhookHandlerAcceptsExpectedProvider(t *testing.T) {
-	handler := NewWebhookHandler(slog.New(slog.NewTextHandler(io.Discard, nil)), "mockpay", "secret")
+type stubWebhookProcessor struct {
+	err error
+}
 
-	req := httptest.NewRequest(http.MethodPost, "/webhooks/payments/mockpay", http.NoBody)
-	req.Header.Set("X-Payment-Webhook-Secret", "secret")
+func (s stubWebhookProcessor) HandleWebhook(ctx context.Context, provider string, headers http.Header, body []byte) error {
+	return s.err
+}
+
+func TestWebhookHandlerAcceptsExpectedProvider(t *testing.T) {
+	handler := NewWebhookHandler(slog.New(slog.NewTextHandler(io.Discard, nil)), "paypal", stubWebhookProcessor{})
+
+	req := httptest.NewRequest(http.MethodPost, "/webhooks/payments/paypal", http.NoBody)
 
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusAccepted {
-		t.Fatalf("expected status %d, got %d", http.StatusAccepted, rec.Code)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d", http.StatusOK, rec.Code)
 	}
 }
 
 func TestWebhookHandlerRejectsNestedProviderPath(t *testing.T) {
-	handler := NewWebhookHandler(slog.New(slog.NewTextHandler(io.Discard, nil)), "mockpay", "secret")
+	handler := NewWebhookHandler(slog.New(slog.NewTextHandler(io.Discard, nil)), "paypal", stubWebhookProcessor{})
 
-	req := httptest.NewRequest(http.MethodPost, "/webhooks/payments/mockpay/extra", http.NoBody)
-	req.Header.Set("X-Payment-Webhook-Secret", "secret")
+	req := httptest.NewRequest(http.MethodPost, "/webhooks/payments/paypal/extra", http.NoBody)
 
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("expected status %d, got %d", http.StatusNotFound, rec.Code)
+	}
+}
+
+func TestWebhookHandlerRejectsUnauthorizedWebhook(t *testing.T) {
+	handler := NewWebhookHandler(slog.New(slog.NewTextHandler(io.Discard, nil)), "paypal", stubWebhookProcessor{
+		err: ErrWebhookUnauthorized,
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/webhooks/payments/paypal", http.NoBody)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected status %d, got %d", http.StatusUnauthorized, rec.Code)
+	}
+}
+
+func TestWebhookHandlerRejectsUnsupportedProvider(t *testing.T) {
+	handler := NewWebhookHandler(slog.New(slog.NewTextHandler(io.Discard, nil)), "paypal", stubWebhookProcessor{
+		err: ErrUnsupportedProvider,
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/webhooks/payments/paypal", http.NoBody)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("expected status %d, got %d", http.StatusNotFound, rec.Code)
+	}
+}
+
+func TestWebhookHandlerRejectsBadWebhookPayloads(t *testing.T) {
+	handler := NewWebhookHandler(slog.New(slog.NewTextHandler(io.Discard, nil)), "paypal", stubWebhookProcessor{
+		err: errors.New("bad payload"),
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/webhooks/payments/paypal", http.NoBody)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected status %d, got %d", http.StatusBadRequest, rec.Code)
 	}
 }

@@ -456,6 +456,82 @@ func (p *Postgres) MarkOrderPendingPayment(ctx context.Context, params MarkOrder
 	return order, nil
 }
 
+func (p *Postgres) GetOrder(ctx context.Context, orderID int64) (Order, error) {
+	if err := p.ensurePool(); err != nil {
+		return Order{}, err
+	}
+	if orderID == 0 {
+		return Order{}, fmt.Errorf("%w: order id is required", ErrInvalidArgument)
+	}
+
+	row := p.Pool.QueryRow(ctx, `
+		SELECT
+			id,
+			user_id,
+			listing_id,
+			coupon_id,
+			order_number,
+			status,
+			currency_code,
+			sale_price_amount,
+			provider_checkout_reference,
+			final_sale_acknowledged_at,
+			failure_reason,
+			placed_at,
+			delivered_at,
+			created_at,
+			updated_at
+		FROM orders
+		WHERE id = $1
+	`, orderID)
+
+	order, err := scanOrder(row)
+	if err != nil {
+		return Order{}, mapStoreErr(err)
+	}
+
+	return order, nil
+}
+
+func (p *Postgres) GetOrderByProviderCheckoutReference(ctx context.Context, providerCheckoutReference string) (Order, error) {
+	if err := p.ensurePool(); err != nil {
+		return Order{}, err
+	}
+	if strings.TrimSpace(providerCheckoutReference) == "" {
+		return Order{}, fmt.Errorf("%w: provider checkout reference is required", ErrInvalidArgument)
+	}
+
+	row := p.Pool.QueryRow(ctx, `
+		SELECT
+			id,
+			user_id,
+			listing_id,
+			coupon_id,
+			order_number,
+			status,
+			currency_code,
+			sale_price_amount,
+			provider_checkout_reference,
+			final_sale_acknowledged_at,
+			failure_reason,
+			placed_at,
+			delivered_at,
+			created_at,
+			updated_at
+		FROM orders
+		WHERE provider_checkout_reference = $1
+		ORDER BY updated_at DESC, id DESC
+		LIMIT 1
+	`, providerCheckoutReference)
+
+	order, err := scanOrder(row)
+	if err != nil {
+		return Order{}, mapStoreErr(err)
+	}
+
+	return order, nil
+}
+
 func (p *Postgres) RecordPaymentEvent(ctx context.Context, params RecordPaymentEventParams) (Payment, error) {
 	if err := p.ensurePool(); err != nil {
 		return Payment{}, err
@@ -512,6 +588,48 @@ func (p *Postgres) RecordPaymentEvent(ctx context.Context, params RecordPaymentE
 	}
 
 	return payment, nil
+}
+
+func (p *Postgres) GetCoupon(ctx context.Context, couponID int64) (Coupon, error) {
+	if err := p.ensurePool(); err != nil {
+		return Coupon{}, err
+	}
+	if couponID == 0 {
+		return Coupon{}, fmt.Errorf("%w: coupon id is required", ErrInvalidArgument)
+	}
+
+	row := p.Pool.QueryRow(ctx, `
+		SELECT
+			id,
+			listing_id,
+			source_id,
+			merchant_name,
+			coupon_title,
+			coupon_value_amount,
+			sale_price_amount,
+			currency_code,
+			coupon_code_ciphertext,
+			coupon_code_nonce,
+			coupon_masked_display,
+			expiry_at,
+			transferability_status,
+			inventory_status,
+			rights_verified_at,
+			rights_verification_note,
+			acquired_cost_amount,
+			acquired_at,
+			created_at,
+			updated_at
+		FROM coupons
+		WHERE id = $1
+	`, couponID)
+
+	coupon, err := scanCoupon(row)
+	if err != nil {
+		return Coupon{}, mapStoreErr(err)
+	}
+
+	return coupon, nil
 }
 
 func (p *Postgres) AssignAvailableCoupon(ctx context.Context, orderID int64) (Coupon, error) {
@@ -1402,6 +1520,38 @@ func (p *Postgres) GetOrCreateUser(ctx context.Context, telegramUserID int64, di
 	)
 
 	return scanUser(newRow)
+}
+
+func (p *Postgres) GetUserByID(ctx context.Context, userID int64) (User, error) {
+	if err := p.ensurePool(); err != nil {
+		return User{}, err
+	}
+	if userID == 0 {
+		return User{}, fmt.Errorf("%w: user id is required", ErrInvalidArgument)
+	}
+
+	row := p.Pool.QueryRow(ctx, `
+		SELECT
+			id,
+			telegram_user_id,
+			telegram_user,
+			display_name,
+			language_code,
+			status,
+			first_seen_at,
+			last_seen_at,
+			created_at,
+			updated_at
+		FROM users
+		WHERE id = $1
+	`, userID)
+
+	user, err := scanUser(row)
+	if err != nil {
+		return User{}, mapStoreErr(err)
+	}
+
+	return user, nil
 }
 
 func defaultString(value string, fallback string) string {
