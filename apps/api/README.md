@@ -70,16 +70,32 @@ Webhook expectations:
 
 ## Migrations
 
-Migrations live in [migrations](./migrations) as plain SQL files and can be applied with standard PostgreSQL tooling.
+Migrations live in [migrations](./migrations) as plain SQL files and can be applied either with standard PostgreSQL tooling or with the built-in migration command.
 
 PowerShell example:
 
 ```powershell
 psql "$env:DATABASE_URL" -v ON_ERROR_STOP=1 -f apps/api/migrations/0001_initial_schema.sql
 psql "$env:DATABASE_URL" -v ON_ERROR_STOP=1 -f apps/api/migrations/0002_store_invariants.sql
+psql "$env:DATABASE_URL" -v ON_ERROR_STOP=1 -f apps/api/migrations/0003_ops_hardening_indexes.sql
 ```
 
 That works against local Postgres, Supabase Postgres, or another managed PostgreSQL provider as long as `DATABASE_URL` points at the target database.
+
+Built-in migration command:
+
+```powershell
+go run ./apps/api/cmd/migrate status
+go run ./apps/api/cmd/migrate up
+go run ./apps/api/cmd/migrate down
+```
+
+Notes:
+
+- `status` shows whether each local migration is `pending`, `applied`, `drifted`, or missing locally.
+- `up` creates `schema_migrations` if needed and applies any pending migrations in order.
+- `down` reverts only the most recently applied local migration using the matching `.down.sql` file.
+- This is safe to use against Supabase with the current pooled connection string because the runner uses normal PostgreSQL transactions and table locks, not session-level migration locks.
 
 ## Optional Database Settings
 
@@ -95,3 +111,18 @@ In addition to `DATABASE_URL`, the app supports these portable `pgxpool` setting
 - `DATABASE_QUERY_EXEC_MODE`
 
 `DATABASE_QUERY_EXEC_MODE` accepts `cache_statement`, `cache_describe`, `describe_exec`, `exec`, or `simple_protocol`.
+
+## Ops Hardening
+
+The API now runs a small in-process ops loop for launch readiness:
+
+- `OPS_SWEEP_INTERVAL` controls how often the service sweeps expired coupons and listing statuses.
+- `OPS_DELIVERY_ALERT_AFTER` controls when paid-but-undelivered orders are escalated into support cases.
+- `OPS_RECONCILE_AFTER` controls when stale PayPal checkouts are rechecked for delayed callbacks.
+- `OPS_BATCH_SIZE` controls how many orders each ops cycle inspects per category.
+
+Admin operations now keep audit rows for source changes, listing changes, coupon inventory changes, and support outcomes. The dashboard also highlights:
+
+- paid-but-undelivered orders
+- pending payment reconciliations
+- recent admin actions

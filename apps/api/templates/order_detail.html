@@ -38,6 +38,8 @@
       <p><strong>Telegram:</strong> @{{.Order.TelegramUsername}} ({{.Order.TelegramUserID}})</p>
       <p><strong>Sale Price:</strong> {{.Order.SalePriceAmount}} {{.Order.CurrencyCode}}</p>
       <p><strong>Checkout Ref:</strong> {{.Order.ProviderCheckoutReference}}</p>
+      <p><strong>Final Sale Acknowledged:</strong> {{if .Order.FinalSaleAcknowledgedAt}}{{.Order.FinalSaleAcknowledgedAt}}{{else}}-{{end}}</p>
+      <p><strong>Failure Reason:</strong> {{if .Order.FailureReason}}{{.Order.FailureReason}}{{else}}-{{end}}</p>
       <p><strong>Assigned Coupon:</strong> {{if .Order.AssignedCouponMaskedDisplay}}{{.Order.AssignedCouponMaskedDisplay}}{{else}}unassigned{{end}}</p>
       <p><strong>Delivery:</strong> {{if .Order.DeliveryStatus}}{{.Order.DeliveryStatus}}{{else}}none{{end}}</p>
       <p><a href="/admin/support?order_id={{.FormOrderID}}{{if .FormCouponID}}&coupon_id={{.FormCouponID}}{{end}}&user_id={{.FormUserID}}">Create support case from this order</a></p>
@@ -50,6 +52,8 @@
           <tr>
             <th>Provider</th>
             <th>Status</th>
+            <th>Payment ID</th>
+            <th>Checkout ID</th>
             <th>Captured</th>
           </tr>
         </thead>
@@ -58,10 +62,12 @@
           <tr>
             <td>{{.ProviderName}}</td>
             <td>{{.Status}}</td>
+            <td>{{if .ProviderPaymentID}}{{.ProviderPaymentID}}{{else}}-{{end}}</td>
+            <td>{{if .ProviderCheckoutID}}{{.ProviderCheckoutID}}{{else}}-{{end}}</td>
             <td>{{if .CapturedAt}}{{.CapturedAt}}{{else}}-{{end}}</td>
           </tr>
           {{else}}
-          <tr><td colspan="3">No payment events recorded.</td></tr>
+          <tr><td colspan="5">No payment events recorded.</td></tr>
           {{end}}
         </tbody>
       </table>
@@ -74,8 +80,10 @@
     <p><strong>Status:</strong> {{.Delivery.Status}}</p>
     <p><strong>Channel:</strong> {{.Delivery.DeliveryChannel}}</p>
     <p><strong>Telegram Message ID:</strong> {{if .Delivery.TelegramMessageID}}{{.Delivery.TelegramMessageID}}{{else}}-{{end}}</p>
+    <p><strong>Payload Hash:</strong> {{if .Delivery.DeliveryPayloadHash}}{{.Delivery.DeliveryPayloadHash}}{{else}}-{{end}}</p>
     <p><strong>Sent At:</strong> {{if .Delivery.SentAt}}{{.Delivery.SentAt}}{{else}}-{{end}}</p>
     <p><strong>Confirmed At:</strong> {{if .Delivery.ConfirmedAt}}{{.Delivery.ConfirmedAt}}{{else}}-{{end}}</p>
+    <p><strong>Failure Reason:</strong> {{if .Delivery.FailureReason}}{{.Delivery.FailureReason}}{{else}}-{{end}}</p>
     {{else}}
     <p>No delivery record yet.</p>
     {{end}}

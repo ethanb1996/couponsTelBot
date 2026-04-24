@@ -20,6 +20,7 @@
     .success { background: #ecfdf5; color: #065f46; }
     .actions form { display: inline-block; margin-right: .5rem; }
     button { padding: .55rem .9rem; }
+    code { white-space: pre-wrap; word-break: break-word; }
   </style>
 </head>
 <body>
@@ -133,6 +134,32 @@
         </tbody>
       </table>
     </div>
+  </div>
+
+  <div class="card">
+    <h2>Audit Trail</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>When</th>
+          <th>Actor</th>
+          <th>Action</th>
+          <th>Reason</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{range .AdminActions}}
+        <tr>
+          <td>{{.CreatedAt}}</td>
+          <td>{{.AdminActor}}</td>
+          <td>{{.ActionType}}</td>
+          <td>{{if .ReasonText}}{{.ReasonText}}{{else}}-{{end}}</td>
+        </tr>
+        {{else}}
+        <tr><td colspan="4">No audit entries for this listing yet.</td></tr>
+        {{end}}
+      </tbody>
+    </table>
   </div>
 </body>
 </html>

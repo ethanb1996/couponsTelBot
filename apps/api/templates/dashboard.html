@@ -13,6 +13,9 @@
     .notice { padding: .75rem 1rem; border-radius: 8px; margin: 1rem 0; }
     .error { background: #fef2f2; color: #991b1b; }
     .success { background: #ecfdf5; color: #065f46; }
+    table { width: 100%; border-collapse: collapse; margin-top: 1rem; }
+    th, td { border-bottom: 1px solid #e5e7eb; text-align: left; padding: .5rem; vertical-align: top; }
+    code { white-space: pre-wrap; word-break: break-word; }
   </style>
 </head>
 <body>
@@ -56,6 +59,18 @@
       <strong>Database connected</strong>
       <div>{{if .DatabaseOK}}yes{{else}}no{{end}}</div>
     </div>
+    <div class="card">
+      <strong>Paid not delivered</strong>
+      <div>{{.Dashboard.DeliveryAlertCount}}</div>
+    </div>
+    <div class="card">
+      <strong>Pending reconciliations</strong>
+      <div>{{.Dashboard.ReconcileQueueCount}}</div>
+    </div>
+    <div class="card">
+      <strong>Recent audit events</strong>
+      <div>{{.Dashboard.RecentAuditCount}}</div>
+    </div>
   </div>
 
   <div class="card">
@@ -67,6 +82,84 @@
       <li><a href="/admin/orders">Inspect assigned coupons, payment, and delivery</a></li>
       <li><a href="/admin/support">Log and resolve support cases</a></li>
     </ul>
+  </div>
+
+  <div class="card">
+    <h2>Paid But Not Delivered</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Order</th>
+          <th>User</th>
+          <th>Listing</th>
+          <th>Paid At</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{range .DeliveryAlerts}}
+        <tr>
+          <td><a href="/admin/orders/{{.OrderID}}">{{.OrderNumber}}</a><br><span class="muted">{{.Status}}</span></td>
+          <td>{{.UserDisplayName}}</td>
+          <td>{{.ListingTitle}}</td>
+          <td>{{.LastPaidAt}}</td>
+        </tr>
+        {{else}}
+        <tr><td colspan="4">No paid-but-undelivered alerts.</td></tr>
+        {{end}}
+      </tbody>
+    </table>
+  </div>
+
+  <div class="card">
+    <h2>Pending Payment Reconciliation</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Order</th>
+          <th>Status</th>
+          <th>Placed</th>
+          <th>Checkout Ref</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{range .ReconcileQueue}}
+        <tr>
+          <td><a href="/admin/orders/{{.OrderID}}">{{.OrderNumber}}</a></td>
+          <td>{{.Status}}</td>
+          <td>{{if .PlacedAt}}{{.PlacedAt}}{{else}}-{{end}}</td>
+          <td><code>{{.ProviderCheckoutReference}}</code></td>
+        </tr>
+        {{else}}
+        <tr><td colspan="4">No pending reconciliations.</td></tr>
+        {{end}}
+      </tbody>
+    </table>
+  </div>
+
+  <div class="card">
+    <h2>Recent Admin Actions</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>When</th>
+          <th>Actor</th>
+          <th>Entity</th>
+          <th>Action</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{range .AdminActions}}
+        <tr>
+          <td>{{.CreatedAt}}</td>
+          <td>{{.AdminActor}}</td>
+          <td>{{.EntityType}} #{{.EntityID}}</td>
+          <td>{{.ActionType}}</td>
+        </tr>
+        {{else}}
+        <tr><td colspan="4">No admin actions recorded yet.</td></tr>
+        {{end}}
+      </tbody>
+    </table>
   </div>
 
   <p class="muted">Rendered at {{.Now}}</p>

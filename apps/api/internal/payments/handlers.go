@@ -62,6 +62,7 @@ func (h *WebhookHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.logger.Error("payment webhook processing failed",
 			"provider", provider,
 			"error", err,
+			"request_id", r.Header.Get("X-Request-ID"),
 		)
 		http.Error(w, http.StatusText(statusCode), statusCode)
 		return
@@ -70,6 +71,7 @@ func (h *WebhookHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.logger.Info("payment webhook processed",
 		"provider", provider,
 		"payload_bytes", len(body),
+		"request_id", r.Header.Get("X-Request-ID"),
 	)
 
 	w.Header().Set("Content-Type", "application/json")

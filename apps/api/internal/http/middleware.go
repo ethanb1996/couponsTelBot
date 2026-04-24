@@ -47,8 +47,30 @@ func WithRequestID() func(http.Handler) http.Handler {
 			}
 
 			w.Header().Set("X-Request-ID", requestID)
+			r.Header.Set("X-Request-ID", requestID)
 			ctx := context.WithValue(r.Context(), requestIDKey, requestID)
 			next.ServeHTTP(w, r.WithContext(ctx))
+		})
+	}
+}
+
+func WithSecurityHeaders() func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("X-Content-Type-Options", "nosniff")
+			w.Header().Set("X-Frame-Options", "DENY")
+			w.Header().Set("Referrer-Policy", "no-referrer")
+
+			if r.TLS != nil {
+				w.Header().Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+			}
+
+			if r.URL != nil && len(r.URL.Path) >= len("/admin") && r.URL.Path[:len("/admin")] == "/admin" {
+				w.Header().Set("Cache-Control", "no-store")
+				w.Header().Set("Pragma", "no-cache")
+			}
+
+			next.ServeHTTP(w, r)
 		})
 	}
 }

@@ -1466,7 +1466,7 @@ func (p *Postgres) GetOrCreateUser(ctx context.Context, telegramUserID int64, di
 		SELECT
 			id,
 			telegram_user_id,
-			telegram_user,
+			telegram_username,
 			display_name,
 			language_code,
 			status,
@@ -1494,7 +1494,7 @@ func (p *Postgres) GetOrCreateUser(ctx context.Context, telegramUserID int64, di
 	newRow := p.Pool.QueryRow(ctx, `
 		INSERT INTO users (
 			telegram_user_id,
-			telegram_user,
+			telegram_username,
 			display_name,
 			language_code,
 			status,
@@ -1504,7 +1504,7 @@ func (p *Postgres) GetOrCreateUser(ctx context.Context, telegramUserID int64, di
 		RETURNING
 			id,
 			telegram_user_id,
-			telegram_user,
+			telegram_username,
 			display_name,
 			language_code,
 			status,
@@ -1534,7 +1534,7 @@ func (p *Postgres) GetUserByID(ctx context.Context, userID int64) (User, error) 
 		SELECT
 			id,
 			telegram_user_id,
-			telegram_user,
+			telegram_username,
 			display_name,
 			language_code,
 			status,
@@ -1578,7 +1578,7 @@ func scanUser(row pgx.Row) (User, error) {
 	err := row.Scan(
 		&user.ID,
 		&user.TelegramUserID,
-		&user.TelegramUser,
+		&user.TelegramUsername,
 		&user.DisplayName,
 		&user.LanguageCode,
 		&user.Status,

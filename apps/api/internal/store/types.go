@@ -3,16 +3,16 @@ package store
 import "time"
 
 type User struct {
-	ID             int64
-	TelegramUserID int64
-	TelegramUser   string
-	DisplayName    string
-	LanguageCode   string
-	Status         string
-	FirstSeenAt    time.Time
-	LastSeenAt     time.Time
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
+	ID               int64
+	TelegramUserID   int64
+	TelegramUsername string
+	DisplayName      string
+	LanguageCode     string
+	Status           string
+	FirstSeenAt      time.Time
+	LastSeenAt       time.Time
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
 }
 
 type CouponSource struct {
@@ -148,6 +148,54 @@ type AdminAction struct {
 	CreatedAt       time.Time
 }
 
+type RecordAdminActionParams struct {
+	AdminActor      string
+	EntityType      string
+	EntityID        int64
+	ActionType      string
+	BeforeStateJSON string
+	AfterStateJSON  string
+	ReasonText      string
+}
+
+type AdminActionFilter struct {
+	EntityType string
+	EntityID   *int64
+	Limit      int
+}
+
+type InventorySweepResult struct {
+	ExpiredCoupons  int64
+	ExpiredListings int64
+	SoldOutListings int64
+}
+
+type PaidUndeliveredOrderAlert struct {
+	OrderID                   int64
+	OrderNumber               string
+	UserID                    int64
+	UserDisplayName           string
+	ListingID                 int64
+	ListingTitle              string
+	CouponID                  *int64
+	Status                    string
+	ProviderCheckoutReference string
+	PaymentStatus             string
+	PaymentCapturedAt         *time.Time
+	DeliveryStatus            string
+	DeliveryFailureReason     string
+	LastPaidAt                time.Time
+}
+
+type PendingPaymentReconciliationCandidate struct {
+	OrderID                   int64
+	OrderNumber               string
+	Status                    string
+	ProviderCheckoutReference string
+	PlacedAt                  *time.Time
+	UpdatedAt                 time.Time
+}
+
 type CreateCouponSourceParams struct {
 	SourceName        string
 	SourceType        string
@@ -243,5 +291,15 @@ type CreateSupportCaseParams struct {
 	Priority        string
 	Summary         string
 	ResolutionNote  string
+	AssignedAdminID string
+}
+
+type EnsureSupportCaseParams struct {
+	UserID          *int64
+	OrderID         *int64
+	CouponID        *int64
+	CaseType        string
+	Priority        string
+	Summary         string
 	AssignedAdminID string
 }

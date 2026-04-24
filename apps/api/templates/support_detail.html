@@ -14,6 +14,8 @@
     .error { background: #fef2f2; color: #991b1b; }
     .success { background: #ecfdf5; color: #065f46; }
     .muted { color: #6b7280; }
+    table { width: 100%; border-collapse: collapse; margin-top: 1rem; }
+    th, td { border-bottom: 1px solid #e5e7eb; text-align: left; padding: .5rem; vertical-align: top; }
   </style>
 </head>
 <body>
@@ -50,6 +52,32 @@
       </div>
       <button type="submit">Mark Resolved</button>
     </form>
+  </div>
+
+  <div class="card">
+    <h2>Audit Trail</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>When</th>
+          <th>Actor</th>
+          <th>Action</th>
+          <th>Reason</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{range .AdminActions}}
+        <tr>
+          <td>{{.CreatedAt}}</td>
+          <td>{{.AdminActor}}</td>
+          <td>{{.ActionType}}</td>
+          <td>{{if .ReasonText}}{{.ReasonText}}{{else}}-{{end}}</td>
+        </tr>
+        {{else}}
+        <tr><td colspan="4">No audit entries for this support case yet.</td></tr>
+        {{end}}
+      </tbody>
+    </table>
   </div>
 </body>
 </html>

@@ -34,14 +34,35 @@ type CouponDeliverer interface {
 	SendHTMLMessage(ctx context.Context, telegramUserID int64, text string) (int64, error)
 }
 
+type paymentStore interface {
+	MarkOrderPendingPayment(ctx context.Context, params store.MarkOrderPendingPaymentParams) (store.Order, error)
+	RecordPaymentEvent(ctx context.Context, params store.RecordPaymentEventParams) (store.Payment, error)
+	GetOrderByProviderCheckoutReference(ctx context.Context, providerCheckoutReference string) (store.Order, error)
+	GetCouponDeliveryForOrder(ctx context.Context, orderID int64) (*store.CouponDelivery, error)
+	GetOrder(ctx context.Context, orderID int64) (store.Order, error)
+	AssignAvailableCoupon(ctx context.Context, orderID int64) (store.Coupon, error)
+	GetCoupon(ctx context.Context, couponID int64) (store.Coupon, error)
+	GetUserByID(ctx context.Context, userID int64) (store.User, error)
+	GetListing(ctx context.Context, listingID int64) (store.Listing, error)
+	RecordDeliveryEvent(ctx context.Context, params store.RecordDeliveryEventParams) (store.CouponDelivery, error)
+	EnsureSupportCase(ctx context.Context, params store.EnsureSupportCaseParams) (store.SupportCase, bool, error)
+}
+
+type payPalGateway interface {
+	CreateCheckout(ctx context.Context, input payPalCreateCheckoutInput) (payPalCheckout, error)
+	VerifyAndParseWebhook(ctx context.Context, headers http.Header, body []byte) (payPalWebhookEvent, error)
+	CaptureOrder(ctx context.Context, orderID string) (payPalCapture, error)
+	GetOrder(ctx context.Context, orderID string) (payPalOrderSnapshot, error)
+}
+
 type Service struct {
 	logger              *slog.Logger
-	store               *store.Postgres
+	store               paymentStore
 	deliverer           CouponDeliverer
 	providerName        string
 	appBaseURL          string
 	couponEncryptionKey string
-	paypal              *paypalClient
+	paypal              payPalGateway
 }
 
 func NewService(logger *slog.Logger, repo *store.Postgres, cfg config.Config, deliverer CouponDeliverer) (*Service, error) {
@@ -135,6 +156,48 @@ func (s *Service) HandleWebhook(ctx context.Context, provider string, headers ht
 		return s.processCapture(ctx, event.RelatedOrderID(), event.CaptureID(), "failed", event.AmountMinorUnits(), event.CurrencyCode())
 	default:
 		s.logger.Info("ignoring unsupported payment webhook event", "provider", provider, "event_type", event.EventType, "event_id", event.ID)
+		return nil
+	}
+}
+
+func (s *Service) ReconcilePendingOrder(ctx context.Context, candidate store.PendingPaymentReconciliationCandidate) error {
+	if strings.TrimSpace(candidate.ProviderCheckoutReference) == "" {
+		return nil
+	}
+
+	orderSnapshot, err := s.paypal.GetOrder(ctx, candidate.ProviderCheckoutReference)
+	if err != nil {
+		return err
+	}
+
+	switch orderSnapshot.Status {
+	case "approved":
+		capture, err := s.paypal.CaptureOrder(ctx, candidate.ProviderCheckoutReference)
+		if err != nil {
+			return err
+		}
+		return s.processCapture(ctx, capture.OrderID, capture.CaptureID, capture.Status, capture.Amount, capture.CurrencyCode)
+	case "completed":
+		if strings.TrimSpace(orderSnapshot.CaptureID) == "" {
+			return nil
+		}
+		return s.processCapture(ctx, orderSnapshot.OrderID, orderSnapshot.CaptureID, "captured", orderSnapshot.Amount, orderSnapshot.CurrencyCode)
+	case "voided":
+		order, err := s.store.GetOrder(ctx, candidate.OrderID)
+		if err != nil {
+			return err
+		}
+		_, err = s.store.RecordPaymentEvent(ctx, store.RecordPaymentEventParams{
+			OrderID:            order.ID,
+			ProviderName:       s.providerName,
+			ProviderCheckoutID: candidate.ProviderCheckoutReference,
+			Status:             "cancelled",
+			Amount:             order.SalePriceAmount,
+			CurrencyCode:       order.CurrencyCode,
+			FailureMessage:     "payment order was voided during reconciliation",
+		})
+		return err
+	default:
 		return nil
 	}
 }
@@ -258,6 +321,20 @@ func (s *Service) recordFailedDelivery(ctx context.Context, orderID int64, coupo
 		Status:              "failed",
 		DeliveryPayloadHash: payloadHash,
 		FailureReason:       truncateText(returnErr, 255),
+	})
+	if err != nil {
+		return err
+	}
+
+	orderIDCopy := orderID
+	couponIDCopy := couponID
+	_, _, err = s.store.EnsureSupportCase(ctx, store.EnsureSupportCaseParams{
+		OrderID:         &orderIDCopy,
+		CouponID:        &couponIDCopy,
+		CaseType:        "delivery_issue",
+		Priority:        "high",
+		Summary:         truncateText(fmt.Sprintf("Automatic delivery escalation for order %d: %s", orderID, returnErr), 255),
+		AssignedAdminID: "ops-job",
 	})
 	return err
 }

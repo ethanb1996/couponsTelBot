@@ -110,6 +110,8 @@ func (h *Handler) support(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
+		h.recordAdminAction(r.Context(), h.operatorID(r), "support_case", supportCase.ID, "create_support_case", nil, supportCase, "support case created in admin")
+
 		h.redirectWithSuccess(w, r, fmt.Sprintf("/admin/support/%d", supportCase.ID), "support case created")
 	default:
 		h.methodNotAllowed(w, http.MethodGet, http.MethodPost)
@@ -133,6 +135,11 @@ func (h *Handler) supportDetail(w http.ResponseWriter, r *http.Request, path str
 
 		data := h.basePageData("Support Case", r.URL.Path, r)
 		data.SupportCase = &supportCase
+		data.AdminActions, _ = h.store.ListAdminActions(r.Context(), store.AdminActionFilter{
+			EntityType: "support_case",
+			EntityID:   &supportCaseID,
+			Limit:      20,
+		})
 
 		h.render(w, "support_detail.html", data)
 	case http.MethodPost:
@@ -141,11 +148,19 @@ func (h *Handler) supportDetail(w http.ResponseWriter, r *http.Request, path str
 			return
 		}
 
-		_, err := h.store.ResolveSupportCase(r.Context(), supportCaseID, strings.TrimSpace(r.PostForm.Get("resolution_note")), h.operatorID(r))
+		before, err := h.store.GetSupportCase(r.Context(), supportCaseID)
 		if err != nil {
 			h.redirectWithError(w, r, fmt.Sprintf("/admin/support/%d", supportCaseID), err.Error())
 			return
 		}
+
+		supportCase, err := h.store.ResolveSupportCase(r.Context(), supportCaseID, strings.TrimSpace(r.PostForm.Get("resolution_note")), h.operatorID(r))
+		if err != nil {
+			h.redirectWithError(w, r, fmt.Sprintf("/admin/support/%d", supportCaseID), err.Error())
+			return
+		}
+
+		h.recordAdminAction(r.Context(), h.operatorID(r), "support_case", supportCase.ID, "resolve_support_case", before, supportCase, strings.TrimSpace(r.PostForm.Get("resolution_note")))
 
 		h.redirectWithSuccess(w, r, fmt.Sprintf("/admin/support/%d", supportCaseID), "support case resolved")
 	default:

@@ -13,6 +13,7 @@ import (
 
 	"github.com/ethanb1996/couponsTelBot/apps/api/internal/config"
 	apphttp "github.com/ethanb1996/couponsTelBot/apps/api/internal/http"
+	"github.com/ethanb1996/couponsTelBot/apps/api/internal/ops"
 	"github.com/ethanb1996/couponsTelBot/apps/api/internal/store"
 )
 
@@ -59,7 +60,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	handler, err := apphttp.NewRouter(apphttp.Dependencies{
+	router, err := apphttp.NewRouter(apphttp.Dependencies{
 		Logger: logger,
 		Config: cfg,
 		Store:  db,
@@ -69,9 +70,19 @@ func main() {
 		os.Exit(1)
 	}
 
+	ops.NewRunner(
+		logger,
+		db,
+		router.PaymentService,
+		cfg.OpsSweepInterval,
+		cfg.OpsDeliveryAlertAfter,
+		cfg.OpsReconcileAfter,
+		cfg.OpsBatchSize,
+	).Start(ctx)
+
 	server := &http.Server{
 		Addr:              ":" + cfg.Port,
-		Handler:           handler,
+		Handler:           router.Handler,
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 

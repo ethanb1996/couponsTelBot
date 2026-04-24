@@ -35,6 +35,10 @@ type Config struct {
 	AdminBasicAuthUser        string
 	AdminBasicAuthPass        string
 	CouponEncryptionKey       string
+	OpsSweepInterval          time.Duration
+	OpsDeliveryAlertAfter     time.Duration
+	OpsReconcileAfter         time.Duration
+	OpsBatchSize              int
 }
 
 func Load() (Config, error) {
@@ -72,6 +76,26 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 
+	opsSweepInterval, err := durationEnvWithDefault("OPS_SWEEP_INTERVAL", time.Minute)
+	if err != nil {
+		return Config{}, err
+	}
+
+	opsDeliveryAlertAfter, err := durationEnvWithDefault("OPS_DELIVERY_ALERT_AFTER", 5*time.Minute)
+	if err != nil {
+		return Config{}, err
+	}
+
+	opsReconcileAfter, err := durationEnvWithDefault("OPS_RECONCILE_AFTER", 2*time.Minute)
+	if err != nil {
+		return Config{}, err
+	}
+
+	opsBatchSize, err := intEnvWithDefault("OPS_BATCH_SIZE", 25)
+	if err != nil {
+		return Config{}, err
+	}
+
 	cfg := Config{
 		AppEnv:                    envWithDefault("APP_ENV", "development"),
 		Port:                      envWithDefault("PORT", "8080"),
@@ -95,6 +119,10 @@ func Load() (Config, error) {
 		AdminBasicAuthUser:        strings.TrimSpace(os.Getenv("ADMIN_BASIC_AUTH_USER")),
 		AdminBasicAuthPass:        strings.TrimSpace(os.Getenv("ADMIN_BASIC_AUTH_PASS")),
 		CouponEncryptionKey:       strings.TrimSpace(os.Getenv("COUPON_ENCRYPTION_KEY")),
+		OpsSweepInterval:          opsSweepInterval,
+		OpsDeliveryAlertAfter:     opsDeliveryAlertAfter,
+		OpsReconcileAfter:         opsReconcileAfter,
+		OpsBatchSize:              opsBatchSize,
 	}
 
 	var missing []string
@@ -222,6 +250,20 @@ func int32EnvWithDefault(key string, fallback int32) (int32, error) {
 	return int32(parsed), nil
 }
 
+func intEnvWithDefault(key string, fallback int) (int, error) {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return fallback, nil
+	}
+
+	parsed, err := strconv.Atoi(value)
+	if err != nil {
+		return 0, fmt.Errorf("%s must be a valid integer: %w", key, err)
+	}
+
+	return parsed, nil
+}
+
 func durationEnvWithDefault(key string, fallback time.Duration) (time.Duration, error) {
 	value := strings.TrimSpace(os.Getenv(key))
 	if value == "" {
@@ -267,6 +309,28 @@ func validateDatabaseConfig(cfg Config) error {
 
 	if cfg.DatabaseHealthCheckPeriod <= 0 {
 		return fmt.Errorf("DATABASE_HEALTH_CHECK_PERIOD must be greater than zero")
+	}
+
+	switch len(cfg.CouponEncryptionKey) {
+	case 16, 24, 32:
+	default:
+		return fmt.Errorf("COUPON_ENCRYPTION_KEY must be 16, 24, or 32 bytes")
+	}
+
+	if cfg.OpsSweepInterval <= 0 {
+		return fmt.Errorf("OPS_SWEEP_INTERVAL must be greater than zero")
+	}
+
+	if cfg.OpsDeliveryAlertAfter <= 0 {
+		return fmt.Errorf("OPS_DELIVERY_ALERT_AFTER must be greater than zero")
+	}
+
+	if cfg.OpsReconcileAfter <= 0 {
+		return fmt.Errorf("OPS_RECONCILE_AFTER must be greater than zero")
+	}
+
+	if cfg.OpsBatchSize <= 0 {
+		return fmt.Errorf("OPS_BATCH_SIZE must be greater than zero")
 	}
 
 	switch cfg.DatabaseQueryExecMode {

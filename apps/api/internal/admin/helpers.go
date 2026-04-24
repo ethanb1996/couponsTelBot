@@ -1,7 +1,9 @@
 package admin
 
 import (
+	"context"
 	"encoding/csv"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -9,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/ethanb1996/couponsTelBot/apps/api/internal/store"
 )
 
 type importedCouponRow struct {
@@ -253,4 +257,43 @@ func urlQueryEscape(value string) string {
 		"?", "%3F",
 	)
 	return replacer.Replace(value)
+}
+
+func (h *Handler) recordAdminAction(ctx context.Context, operator string, entityType string, entityID int64, actionType string, before any, after any, reason string) {
+	beforeJSON, err := marshalAuditState(before)
+	if err != nil {
+		h.logger.Error("failed to marshal admin action before state", "entity_type", entityType, "entity_id", entityID, "error", err)
+		return
+	}
+
+	afterJSON, err := marshalAuditState(after)
+	if err != nil {
+		h.logger.Error("failed to marshal admin action after state", "entity_type", entityType, "entity_id", entityID, "error", err)
+		return
+	}
+
+	if _, err := h.store.RecordAdminAction(ctx, store.RecordAdminActionParams{
+		AdminActor:      operator,
+		EntityType:      entityType,
+		EntityID:        entityID,
+		ActionType:      actionType,
+		BeforeStateJSON: beforeJSON,
+		AfterStateJSON:  afterJSON,
+		ReasonText:      strings.TrimSpace(reason),
+	}); err != nil {
+		h.logger.Error("failed to record admin action", "entity_type", entityType, "entity_id", entityID, "action_type", actionType, "error", err)
+	}
+}
+
+func marshalAuditState(value any) (string, error) {
+	if value == nil {
+		return "{}", nil
+	}
+
+	payload, err := json.Marshal(value)
+	if err != nil {
+		return "", err
+	}
+
+	return string(payload), nil
 }

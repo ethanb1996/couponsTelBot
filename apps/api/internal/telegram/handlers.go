@@ -43,7 +43,7 @@ func (h *WebhookHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	var update tgbotapi.Update
 	if err := json.Unmarshal(body, &update); err != nil {
-		h.logger.Error("failed to unmarshal telegram update", "error", err)
+		h.logger.Error("failed to unmarshal telegram update", "error", err, "request_id", r.Header.Get("X-Request-ID"))
 		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
 		return
 	}
@@ -52,7 +52,7 @@ func (h *WebhookHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	go func() {
 		ctx := r.Context()
 		if err := h.botService.HandleUpdate(ctx, update); err != nil {
-			h.logger.Error("failed to handle update", "error", err, "update_id", update.UpdateID)
+			h.logger.Error("failed to handle update", "error", err, "update_id", update.UpdateID, "request_id", r.Header.Get("X-Request-ID"))
 		}
 	}()
 

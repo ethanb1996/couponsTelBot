@@ -99,6 +99,22 @@ func TestLoadAppliesDefaultsForOptionalEnvironmentVariables(t *testing.T) {
 	if cfg.DatabaseQueryExecMode != "exec" {
 		t.Fatalf("expected default DATABASE_QUERY_EXEC_MODE, got %q", cfg.DatabaseQueryExecMode)
 	}
+
+	if cfg.OpsSweepInterval != time.Minute {
+		t.Fatalf("expected default OPS_SWEEP_INTERVAL, got %s", cfg.OpsSweepInterval)
+	}
+
+	if cfg.OpsDeliveryAlertAfter != 5*time.Minute {
+		t.Fatalf("expected default OPS_DELIVERY_ALERT_AFTER, got %s", cfg.OpsDeliveryAlertAfter)
+	}
+
+	if cfg.OpsReconcileAfter != 2*time.Minute {
+		t.Fatalf("expected default OPS_RECONCILE_AFTER, got %s", cfg.OpsReconcileAfter)
+	}
+
+	if cfg.OpsBatchSize != 25 {
+		t.Fatalf("expected default OPS_BATCH_SIZE, got %d", cfg.OpsBatchSize)
+	}
 }
 
 func TestLoadAppliesExplicitDatabaseSettings(t *testing.T) {
@@ -114,6 +130,10 @@ func TestLoadAppliesExplicitDatabaseSettings(t *testing.T) {
 	t.Setenv("DATABASE_MAX_CONN_IDLE_TIME", "10m")
 	t.Setenv("DATABASE_HEALTH_CHECK_PERIOD", "30s")
 	t.Setenv("DATABASE_QUERY_EXEC_MODE", "EXEC")
+	t.Setenv("OPS_SWEEP_INTERVAL", "2m")
+	t.Setenv("OPS_DELIVERY_ALERT_AFTER", "7m")
+	t.Setenv("OPS_RECONCILE_AFTER", "3m")
+	t.Setenv("OPS_BATCH_SIZE", "15")
 	t.Setenv("TELEGRAM_BOT_TOKEN", "bot-token")
 	t.Setenv("TELEGRAM_WEBHOOK_SECRET", "telegram-secret")
 	t.Setenv("PAYMENT_PROVIDER_NAME", "paypal")
@@ -160,6 +180,22 @@ func TestLoadAppliesExplicitDatabaseSettings(t *testing.T) {
 
 	if cfg.DatabaseQueryExecMode != "exec" {
 		t.Fatalf("expected normalized DATABASE_QUERY_EXEC_MODE, got %q", cfg.DatabaseQueryExecMode)
+	}
+
+	if cfg.OpsSweepInterval != 2*time.Minute {
+		t.Fatalf("expected explicit OPS_SWEEP_INTERVAL, got %s", cfg.OpsSweepInterval)
+	}
+
+	if cfg.OpsDeliveryAlertAfter != 7*time.Minute {
+		t.Fatalf("expected explicit OPS_DELIVERY_ALERT_AFTER, got %s", cfg.OpsDeliveryAlertAfter)
+	}
+
+	if cfg.OpsReconcileAfter != 3*time.Minute {
+		t.Fatalf("expected explicit OPS_RECONCILE_AFTER, got %s", cfg.OpsReconcileAfter)
+	}
+
+	if cfg.OpsBatchSize != 15 {
+		t.Fatalf("expected explicit OPS_BATCH_SIZE, got %d", cfg.OpsBatchSize)
 	}
 }
 
@@ -256,6 +292,29 @@ func TestLoadRejectsUnexpectedPayPalBaseURL(t *testing.T) {
 	expected := "PAYMENT_PROVIDER_BASE_URL must be https://api-m.sandbox.paypal.com or https://api-m.paypal.com"
 	if err.Error() != expected {
 		t.Fatalf("unexpected error message\nwant: %s\ngot:  %s", expected, err.Error())
+	}
+}
+
+func TestLoadRejectsUnsupportedCouponEncryptionKeyLength(t *testing.T) {
+	t.Setenv("DATABASE_URL", "postgres://example")
+	t.Setenv("TELEGRAM_BOT_TOKEN", "bot-token")
+	t.Setenv("TELEGRAM_WEBHOOK_SECRET", "telegram-secret")
+	t.Setenv("PAYMENT_PROVIDER_NAME", "paypal")
+	t.Setenv("PAYMENT_PROVIDER_CLIENT_ID", "paypal-client-id")
+	t.Setenv("PAYMENT_PROVIDER_SECRET", "provider-secret")
+	t.Setenv("PAYMENT_PROVIDER_BASE_URL", "https://api-m.sandbox.paypal.com")
+	t.Setenv("PAYMENT_PROVIDER_WEBHOOK_ID", "provider-webhook-id")
+	t.Setenv("ADMIN_BASIC_AUTH_USER", "admin")
+	t.Setenv("ADMIN_BASIC_AUTH_PASS", "password")
+	t.Setenv("COUPON_ENCRYPTION_KEY", "short-key")
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("expected config load to fail")
+	}
+
+	if got := err.Error(); got != "COUPON_ENCRYPTION_KEY must be 16, 24, or 32 bytes" {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 

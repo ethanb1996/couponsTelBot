@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/ethanb1996/couponsTelBot/apps/api/internal/store"
 )
@@ -41,6 +42,24 @@ func (h *Handler) dashboard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	deliveryAlerts, err := h.store.ListPaidUndeliveredOrders(r.Context(), 5*time.Minute, 10)
+	if err != nil {
+		h.serverError(w, "failed to list delivery alerts", err)
+		return
+	}
+
+	reconcileQueue, err := h.store.ListPendingPaymentReconciliationCandidates(r.Context(), 2*time.Minute, 10)
+	if err != nil {
+		h.serverError(w, "failed to list pending reconciliations", err)
+		return
+	}
+
+	adminActions, err := h.store.ListAdminActions(r.Context(), store.AdminActionFilter{Limit: 10})
+	if err != nil {
+		h.serverError(w, "failed to list admin actions", err)
+		return
+	}
+
 	var activeListingCount int
 	var availableCouponCount int64
 	for _, listing := range listings {
@@ -57,7 +76,13 @@ func (h *Handler) dashboard(w http.ResponseWriter, r *http.Request) {
 		AvailableCouponCount: availableCouponCount,
 		RecentOrderCount:     len(orders),
 		OpenSupportCount:     len(supportCases),
+		DeliveryAlertCount:   len(deliveryAlerts),
+		ReconcileQueueCount:  len(reconcileQueue),
+		RecentAuditCount:     len(adminActions),
 	}
+	data.DeliveryAlerts = deliveryAlerts
+	data.ReconcileQueue = reconcileQueue
+	data.AdminActions = adminActions
 
 	h.render(w, "dashboard.html", data)
 }
@@ -73,7 +98,7 @@ func (h *Handler) sources(w http.ResponseWriter, r *http.Request) {
 		}
 
 		isActive := r.PostForm.Get("is_active") == "on"
-		_, err := h.store.CreateCouponSource(r.Context(), store.CreateCouponSourceParams{
+		source, err := h.store.CreateCouponSource(r.Context(), store.CreateCouponSourceParams{
 			SourceName:        strings.TrimSpace(r.PostForm.Get("source_name")),
 			SourceType:        strings.TrimSpace(r.PostForm.Get("source_type")),
 			ContactReference:  strings.TrimSpace(r.PostForm.Get("contact_reference")),
@@ -86,6 +111,8 @@ func (h *Handler) sources(w http.ResponseWriter, r *http.Request) {
 			h.redirectWithError(w, r, "/admin/sources", err.Error())
 			return
 		}
+
+		h.recordAdminAction(r.Context(), h.operatorID(r), "coupon_source", source.ID, "create_source", nil, source, "coupon source created in admin")
 
 		h.redirectWithSuccess(w, r, "/admin/sources", "coupon source created")
 	default:
@@ -114,8 +141,14 @@ func (h *Handler) sourceDetail(w http.ResponseWriter, r *http.Request, path stri
 			return
 		}
 
+		before, err := h.store.GetCouponSource(r.Context(), sourceID)
+		if err != nil {
+			h.redirectWithError(w, r, fmt.Sprintf("/admin/sources/%d", sourceID), err.Error())
+			return
+		}
+
 		isActive := r.PostForm.Get("is_active") == "on"
-		_, err := h.store.UpdateCouponSource(r.Context(), sourceID, store.CreateCouponSourceParams{
+		source, err := h.store.UpdateCouponSource(r.Context(), sourceID, store.CreateCouponSourceParams{
 			SourceName:        strings.TrimSpace(r.PostForm.Get("source_name")),
 			SourceType:        strings.TrimSpace(r.PostForm.Get("source_type")),
 			ContactReference:  strings.TrimSpace(r.PostForm.Get("contact_reference")),
@@ -128,6 +161,8 @@ func (h *Handler) sourceDetail(w http.ResponseWriter, r *http.Request, path stri
 			h.redirectWithError(w, r, fmt.Sprintf("/admin/sources/%d", sourceID), err.Error())
 			return
 		}
+
+		h.recordAdminAction(r.Context(), h.operatorID(r), "coupon_source", source.ID, "update_source", before, source, "coupon source updated in admin")
 
 		h.redirectWithSuccess(w, r, fmt.Sprintf("/admin/sources/%d", sourceID), "coupon source updated")
 	default:
@@ -164,6 +199,8 @@ func (h *Handler) listings(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
+		h.recordAdminAction(r.Context(), h.operatorID(r), "listing", listing.ID, "create_listing", nil, listing, "listing created in admin")
+
 		h.redirectWithSuccess(w, r, fmt.Sprintf("/admin/listings/%d", listing.ID), "listing created")
 	default:
 		h.methodNotAllowed(w, http.MethodGet, http.MethodPost)
@@ -189,7 +226,13 @@ func (h *Handler) listingDetail(w http.ResponseWriter, r *http.Request, path str
 
 		switch action {
 		case "save_listing":
-			_, err := h.store.UpdateListing(r.Context(), listingID, store.CreateListingParams{
+			before, err := h.store.GetListing(r.Context(), listingID)
+			if err != nil {
+				h.redirectWithError(w, r, fmt.Sprintf("/admin/listings/%d", listingID), err.Error())
+				return
+			}
+
+			listing, err := h.store.UpdateListing(r.Context(), listingID, store.CreateListingParams{
 				MerchantName:            strings.TrimSpace(r.FormValue("merchant_name")),
 				Title:                   strings.TrimSpace(r.FormValue("title")),
 				Description:             strings.TrimSpace(r.FormValue("description")),
@@ -206,19 +249,29 @@ func (h *Handler) listingDetail(w http.ResponseWriter, r *http.Request, path str
 				h.redirectWithError(w, r, fmt.Sprintf("/admin/listings/%d", listingID), err.Error())
 				return
 			}
+			h.recordAdminAction(r.Context(), h.operatorID(r), "listing", listing.ID, "update_listing", before, listing, "listing details updated")
 			h.redirectWithSuccess(w, r, fmt.Sprintf("/admin/listings/%d", listingID), "listing updated")
 		case "publish_listing":
-			h.updateListingStatus(w, r, listingID, "active", "listing published")
+			h.updateListingStatus(w, r, listingID, "active", "publish_listing", "listing published")
 		case "pause_listing":
-			h.updateListingStatus(w, r, listingID, "paused", "listing paused")
+			h.updateListingStatus(w, r, listingID, "paused", "pause_listing", "listing paused")
 		case "mark_sold_out":
-			h.updateListingStatus(w, r, listingID, "sold_out", "listing marked sold out")
+			h.updateListingStatus(w, r, listingID, "sold_out", "mark_sold_out", "listing marked sold out")
 		case "mark_expired":
-			h.updateListingStatus(w, r, listingID, "expired", "listing marked expired")
+			h.updateListingStatus(w, r, listingID, "expired", "mark_expired", "listing marked expired")
 		case "import_coupons":
+			before, err := h.store.GetListingForAdmin(r.Context(), listingID)
+			if err != nil {
+				h.redirectWithError(w, r, fmt.Sprintf("/admin/listings/%d", listingID), err.Error())
+				return
+			}
 			if err := h.importCouponsForListing(r, listingID); err != nil {
 				h.redirectWithError(w, r, fmt.Sprintf("/admin/listings/%d", listingID), err.Error())
 				return
+			}
+			after, err := h.store.GetListingForAdmin(r.Context(), listingID)
+			if err == nil {
+				h.recordAdminAction(r.Context(), h.operatorID(r), "listing", listingID, "import_coupons", before, after, "coupon inventory imported for listing")
 			}
 			h.redirectWithSuccess(w, r, fmt.Sprintf("/admin/listings/%d", listingID), "coupon inventory ingested")
 		default:
@@ -258,11 +311,19 @@ func (h *Handler) coupons(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		_, err = h.store.UpdateCouponInventoryStatus(r.Context(), couponID, nextStatus)
+		before, err := h.store.GetCoupon(r.Context(), couponID)
 		if err != nil {
 			h.redirectWithError(w, r, "/admin/coupons", err.Error())
 			return
 		}
+
+		coupon, err := h.store.UpdateCouponInventoryStatus(r.Context(), couponID, nextStatus)
+		if err != nil {
+			h.redirectWithError(w, r, "/admin/coupons", err.Error())
+			return
+		}
+
+		h.recordAdminAction(r.Context(), h.operatorID(r), "coupon", coupon.ID, "update_coupon_inventory", before, coupon, "coupon inventory status changed to "+nextStatus)
 
 		h.redirectWithSuccess(w, r, "/admin/coupons", "coupon inventory updated")
 	default:
@@ -290,8 +351,18 @@ func (h *Handler) loadSourceDetailPage(r *http.Request, sourceID int64) (pageDat
 		return pageData{}, err
 	}
 
+	actions, err := h.store.ListAdminActions(r.Context(), store.AdminActionFilter{
+		EntityType: "coupon_source",
+		EntityID:   &sourceID,
+		Limit:      20,
+	})
+	if err != nil {
+		return pageData{}, err
+	}
+
 	data := h.basePageData("Coupon Source", r.URL.Path, r)
 	data.Source = &source
+	data.AdminActions = actions
 	return data, nil
 }
 
@@ -335,6 +406,11 @@ func (h *Handler) renderListingDetailPage(w http.ResponseWriter, r *http.Request
 	data.Sources = sources
 	data.Coupons = coupons
 	data.ImportExample = "masked-display,plain-code,2026-12-31 or plain-code,2026-12-31"
+	data.AdminActions, _ = h.store.ListAdminActions(r.Context(), store.AdminActionFilter{
+		EntityType: "listing",
+		EntityID:   &listingID,
+		Limit:      20,
+	})
 
 	h.render(w, "listing_detail.html", data)
 }
@@ -372,6 +448,10 @@ func (h *Handler) renderCouponsPage(w http.ResponseWriter, r *http.Request) {
 	data.Coupons = coupons
 	data.SelectedStatus = status
 	data.SelectedListingID = selectedListingID
+	data.AdminActions, _ = h.store.ListAdminActions(r.Context(), store.AdminActionFilter{
+		EntityType: "coupon",
+		Limit:      20,
+	})
 
 	h.render(w, "coupons.html", data)
 }
@@ -391,12 +471,20 @@ func (h *Handler) parseListingDetailAction(r *http.Request) (string, error) {
 	return strings.TrimSpace(r.PostForm.Get("action")), nil
 }
 
-func (h *Handler) updateListingStatus(w http.ResponseWriter, r *http.Request, listingID int64, nextStatus string, successMessage string) {
-	_, err := h.store.UpdateListingStatus(r.Context(), listingID, nextStatus)
+func (h *Handler) updateListingStatus(w http.ResponseWriter, r *http.Request, listingID int64, nextStatus string, actionType string, successMessage string) {
+	before, err := h.store.GetListing(r.Context(), listingID)
 	if err != nil {
 		h.redirectWithError(w, r, fmt.Sprintf("/admin/listings/%d", listingID), err.Error())
 		return
 	}
+
+	listing, err := h.store.UpdateListingStatus(r.Context(), listingID, nextStatus)
+	if err != nil {
+		h.redirectWithError(w, r, fmt.Sprintf("/admin/listings/%d", listingID), err.Error())
+		return
+	}
+
+	h.recordAdminAction(r.Context(), h.operatorID(r), "listing", listing.ID, actionType, before, listing, "listing status changed to "+nextStatus)
 
 	h.redirectWithSuccess(w, r, fmt.Sprintf("/admin/listings/%d", listingID), successMessage)
 }

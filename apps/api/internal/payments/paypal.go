@@ -53,6 +53,14 @@ type payPalCapture struct {
 	CurrencyCode string
 }
 
+type payPalOrderSnapshot struct {
+	OrderID      string
+	Status       string
+	CaptureID    string
+	Amount       int64
+	CurrencyCode string
+}
+
 type payPalWebhookEvent struct {
 	ID        string `json:"id"`
 	EventType string `json:"event_type"`
@@ -239,6 +247,66 @@ func (c *paypalClient) CaptureOrder(ctx context.Context, orderID string) (payPal
 	}, nil
 }
 
+func (c *paypalClient) GetOrder(ctx context.Context, orderID string) (payPalOrderSnapshot, error) {
+	accessToken, err := c.fetchAccessToken(ctx)
+	if err != nil {
+		return payPalOrderSnapshot{}, err
+	}
+
+	path := "/v2/checkout/orders/" + url.PathEscape(orderID)
+	var response struct {
+		ID            string `json:"id"`
+		Status        string `json:"status"`
+		PurchaseUnits []struct {
+			Amount   payPalAmount `json:"amount"`
+			Payments struct {
+				Captures []struct {
+					ID     string       `json:"id"`
+					Status string       `json:"status"`
+					Amount payPalAmount `json:"amount"`
+				} `json:"captures"`
+			} `json:"payments"`
+		} `json:"purchase_units"`
+	}
+
+	if err := c.doJSON(ctx, http.MethodGet, path, accessToken, nil, &response); err != nil {
+		return payPalOrderSnapshot{}, err
+	}
+
+	snapshot := payPalOrderSnapshot{
+		OrderID: response.ID,
+		Status:  normalizePayPalOrderStatus(response.Status),
+	}
+	if strings.TrimSpace(snapshot.OrderID) == "" {
+		return payPalOrderSnapshot{}, fmt.Errorf("payments: paypal order lookup missing order id")
+	}
+
+	if len(response.PurchaseUnits) == 0 {
+		return snapshot, nil
+	}
+
+	purchaseUnit := response.PurchaseUnits[0]
+	snapshot.CurrencyCode = purchaseUnit.Amount.CurrencyCode
+	if amount, err := parseMinorUnits(purchaseUnit.Amount.Value); err == nil {
+		snapshot.Amount = amount
+	}
+
+	if len(purchaseUnit.Payments.Captures) == 0 {
+		return snapshot, nil
+	}
+
+	capture := purchaseUnit.Payments.Captures[0]
+	snapshot.CaptureID = capture.ID
+	snapshot.CurrencyCode = defaultCurrency(capture.Amount.CurrencyCode, snapshot.CurrencyCode)
+	amount, err := parseMinorUnits(capture.Amount.Value)
+	if err != nil {
+		return payPalOrderSnapshot{}, err
+	}
+	snapshot.Amount = amount
+
+	return snapshot, nil
+}
+
 func (c *paypalClient) fetchAccessToken(ctx context.Context) (string, error) {
 	form := url.Values{}
 	form.Set("grant_type", "client_credentials")
@@ -278,18 +346,24 @@ func (c *paypalClient) fetchAccessToken(ctx context.Context) (string, error) {
 }
 
 func (c *paypalClient) doJSON(ctx context.Context, method string, path string, accessToken string, payload any, target any) error {
-	body, err := json.Marshal(payload)
-	if err != nil {
-		return err
+	var requestBody io.Reader
+	if payload != nil {
+		body, err := json.Marshal(payload)
+		if err != nil {
+			return err
+		}
+		requestBody = bytes.NewReader(body)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, requestBody)
 	if err != nil {
 		return err
 	}
 
 	req.Header.Set("Accept", "application/json")
-	req.Header.Set("Content-Type", "application/json")
+	if payload != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
 	req.Header.Set("Authorization", "Bearer "+accessToken)
 
 	resp, err := c.client.Do(req)
@@ -385,6 +459,25 @@ func normalizePayPalStatus(status string) string {
 		return "pending"
 	case "DECLINED", "DENIED", "FAILED":
 		return "failed"
+	default:
+		return strings.ToLower(strings.TrimSpace(status))
+	}
+}
+
+func normalizePayPalOrderStatus(status string) string {
+	switch strings.ToUpper(strings.TrimSpace(status)) {
+	case "APPROVED":
+		return "approved"
+	case "COMPLETED":
+		return "completed"
+	case "VOIDED":
+		return "voided"
+	case "PAYER_ACTION_REQUIRED":
+		return "payer_action_required"
+	case "CREATED":
+		return "created"
+	case "SAVED":
+		return "saved"
 	default:
 		return strings.ToLower(strings.TrimSpace(status))
 	}

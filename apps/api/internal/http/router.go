@@ -22,29 +22,34 @@ type Dependencies struct {
 	Store  *store.Postgres
 }
 
-func NewRouter(deps Dependencies) (http.Handler, error) {
+type Router struct {
+	Handler        http.Handler
+	PaymentService *payments.Service
+}
+
+func NewRouter(deps Dependencies) (Router, error) {
 	if deps.Logger == nil {
-		return nil, errors.New("logger is required")
+		return Router{}, errors.New("logger is required")
 	}
 
 	if deps.Store == nil {
-		return nil, errors.New("store is required")
+		return Router{}, errors.New("store is required")
 	}
 
 	adminHandler, err := admin.NewHandler(deps.Logger, deps.Store, deps.Config.CouponEncryptionKey)
 	if err != nil {
-		return nil, err
+		return Router{}, err
 	}
 
 	// Create bot service
 	botService, err := telegram.NewBotService(deps.Logger, deps.Store, deps.Config.TelegramBotToken, &deps.Config)
 	if err != nil {
-		return nil, err
+		return Router{}, err
 	}
 
 	paymentService, err := payments.NewService(deps.Logger, deps.Store, deps.Config, botService)
 	if err != nil {
-		return nil, err
+		return Router{}, err
 	}
 	botService.SetCheckoutStarter(paymentService)
 
@@ -66,12 +71,16 @@ func NewRouter(deps Dependencies) (http.Handler, error) {
 	mux.HandleFunc("/payments/paypal/return", payments.ReturnPage)
 	mux.HandleFunc("/payments/paypal/cancel", payments.CancelPage)
 
-	return Chain(
-		mux,
-		WithRecovery(deps.Logger),
-		WithRequestID(),
-		WithAccessLog(deps.Logger),
-	), nil
+	return Router{
+		Handler: Chain(
+			mux,
+			WithRecovery(deps.Logger),
+			WithRequestID(),
+			WithSecurityHeaders(),
+			WithAccessLog(deps.Logger),
+		),
+		PaymentService: paymentService,
+	}, nil
 }
 
 func healthHandler(db *store.Postgres) http.HandlerFunc {

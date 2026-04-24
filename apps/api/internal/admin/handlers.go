@@ -49,6 +49,9 @@ type pageData struct {
 	Delivery          *store.CouponDelivery
 	SupportCases      []store.SupportCaseSummary
 	SupportCase       *store.SupportCaseSummary
+	AdminActions      []store.AdminAction
+	DeliveryAlerts    []store.PaidUndeliveredOrderAlert
+	ReconcileQueue    []store.PendingPaymentReconciliationCandidate
 	ImportExample     string
 	FormOrderID       string
 	FormCouponID      string
@@ -62,6 +65,9 @@ type dashboardView struct {
 	AvailableCouponCount int64
 	RecentOrderCount     int
 	OpenSupportCount     int
+	DeliveryAlertCount   int
+	ReconcileQueueCount  int
+	RecentAuditCount     int
 }
 
 func NewHandler(logger *slog.Logger, db *store.Postgres, couponEncryptionKey string) (*Handler, error) {
