@@ -1,26 +1,34 @@
 package telegram
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
 	"strconv"
+	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
-type WebhookHandler struct {
-	logger     *slog.Logger
-	secret     string
-	botService *BotService
+const asyncUpdateTimeout = 30 * time.Second
+
+type UpdateHandler interface {
+	HandleUpdate(ctx context.Context, update tgbotapi.Update) error
 }
 
-func NewWebhookHandler(logger *slog.Logger, secret string, botService *BotService) *WebhookHandler {
+type WebhookHandler struct {
+	logger      *slog.Logger
+	secret      string
+	updateLogic UpdateHandler
+}
+
+func NewWebhookHandler(logger *slog.Logger, secret string, updateLogic UpdateHandler) *WebhookHandler {
 	return &WebhookHandler{
-		logger:     logger,
-		secret:     secret,
-		botService: botService,
+		logger:      logger,
+		secret:      secret,
+		updateLogic: updateLogic,
 	}
 }
 
@@ -49,12 +57,15 @@ func (h *WebhookHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Process the update asynchronously
-	go func() {
-		ctx := r.Context()
-		if err := h.botService.HandleUpdate(ctx, update); err != nil {
-			h.logger.Error("failed to handle update", "error", err, "update_id", update.UpdateID, "request_id", r.Header.Get("X-Request-ID"))
+	requestID := r.Header.Get("X-Request-ID")
+	go func(update tgbotapi.Update, requestID string) {
+		ctx, cancel := context.WithTimeout(context.Background(), asyncUpdateTimeout)
+		defer cancel()
+
+		if err := h.updateLogic.HandleUpdate(ctx, update); err != nil {
+			h.logger.Error("failed to handle update", "error", err, "update_id", update.UpdateID, "request_id", requestID)
 		}
-	}()
+	}(update, requestID)
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)

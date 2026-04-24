@@ -1486,7 +1486,7 @@ func (p *Postgres) GetOrCreateUser(ctx context.Context, telegramUserID int64, di
 		return user, nil
 	}
 
-	if !errors.Is(err, pgx.ErrNoRows) {
+	if !isNotFoundErr(err) {
 		return User{}, err
 	}
 
@@ -1566,6 +1566,10 @@ func mapStoreErr(err error) error {
 		return ErrNotFound
 	}
 	return err
+}
+
+func isNotFoundErr(err error) bool {
+	return errors.Is(err, pgx.ErrNoRows) || errors.Is(err, ErrNotFound)
 }
 
 func isUniqueViolation(err error) bool {

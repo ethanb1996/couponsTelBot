@@ -39,4 +39,5 @@ See [apps/api/README.md](apps/api/README.md) for local setup, Supabase SSL guida
 The Go module for the backend lives in `apps/api`.
 
 - From the repo root, run the API with `go run ./apps/api/cmd/server`.
+- From the repo root, check or apply database migrations with `go run ./apps/api/cmd/migrate status` and `go run ./apps/api/cmd/migrate up`.
 - For module maintenance commands such as `go mod tidy`, run them inside `apps/api`.

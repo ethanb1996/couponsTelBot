@@ -4,6 +4,8 @@ import (
 	"errors"
 	"testing"
 	"time"
+
+	"github.com/jackc/pgx/v5"
 )
 
 func TestOrderStatusForPayment(t *testing.T) {
@@ -128,5 +130,21 @@ func TestDeliveryOutcomePendingStatesKeepAssignment(t *testing.T) {
 				t.Fatalf("expected nil delivered timestamp, got %v", gotDeliveredAt)
 			}
 		})
+	}
+}
+
+func TestIsNotFoundErr(t *testing.T) {
+	t.Parallel()
+
+	if !isNotFoundErr(pgx.ErrNoRows) {
+		t.Fatal("expected pgx.ErrNoRows to be treated as not found")
+	}
+
+	if !isNotFoundErr(ErrNotFound) {
+		t.Fatal("expected ErrNotFound to be treated as not found")
+	}
+
+	if isNotFoundErr(errors.New("boom")) {
+		t.Fatal("unexpected generic error to be treated as not found")
 	}
 }

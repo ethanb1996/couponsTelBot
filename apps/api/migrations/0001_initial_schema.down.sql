@@ -1,0 +1,9 @@
+DROP TABLE IF EXISTS admin_actions;
+DROP TABLE IF EXISTS support_cases;
+DROP TABLE IF EXISTS coupon_deliveries;
+DROP TABLE IF EXISTS payments;
+DROP TABLE IF EXISTS orders;
+DROP TABLE IF EXISTS coupons;
+DROP TABLE IF EXISTS listings;
+DROP TABLE IF EXISTS coupon_sources;
+DROP TABLE IF EXISTS users;
