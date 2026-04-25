@@ -38,6 +38,7 @@ type Config struct {
 	OpsSweepInterval          time.Duration
 	OpsDeliveryAlertAfter     time.Duration
 	OpsReconcileAfter         time.Duration
+	OpsCheckoutHoldDuration   time.Duration
 	OpsBatchSize              int
 }
 
@@ -91,6 +92,11 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 
+	opsCheckoutHoldDuration, err := durationEnvWithDefault("OPS_CHECKOUT_HOLD_DURATION", 10*time.Minute)
+	if err != nil {
+		return Config{}, err
+	}
+
 	opsBatchSize, err := intEnvWithDefault("OPS_BATCH_SIZE", 25)
 	if err != nil {
 		return Config{}, err
@@ -122,6 +128,7 @@ func Load() (Config, error) {
 		OpsSweepInterval:          opsSweepInterval,
 		OpsDeliveryAlertAfter:     opsDeliveryAlertAfter,
 		OpsReconcileAfter:         opsReconcileAfter,
+		OpsCheckoutHoldDuration:   opsCheckoutHoldDuration,
 		OpsBatchSize:              opsBatchSize,
 	}
 
@@ -327,6 +334,10 @@ func validateDatabaseConfig(cfg Config) error {
 
 	if cfg.OpsReconcileAfter <= 0 {
 		return fmt.Errorf("OPS_RECONCILE_AFTER must be greater than zero")
+	}
+
+	if cfg.OpsCheckoutHoldDuration <= 0 {
+		return fmt.Errorf("OPS_CHECKOUT_HOLD_DURATION must be greater than zero")
 	}
 
 	if cfg.OpsBatchSize <= 0 {

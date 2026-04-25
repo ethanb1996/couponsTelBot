@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/aes"
 	"crypto/cipher"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -26,6 +27,7 @@ func TestProcessCaptureDeliversOnlyOnceAcrossDuplicateWebhooks(t *testing.T) {
 			ListingID:                 88,
 			OrderNumber:               "ORD-101",
 			Status:                    "pending_payment",
+			CouponID:                  int64Ptr(501),
 			CurrencyCode:              "ILS",
 			SalePriceAmount:           2599,
 			ProviderCheckoutReference: "checkout-101",
@@ -68,8 +70,8 @@ func TestProcessCaptureDeliversOnlyOnceAcrossDuplicateWebhooks(t *testing.T) {
 	if deliverer.sendCount != 1 {
 		t.Fatalf("expected one delivery send, got %d", deliverer.sendCount)
 	}
-	if mockStore.assignCalls != 1 {
-		t.Fatalf("expected one coupon assignment, got %d", mockStore.assignCalls)
+	if mockStore.prepareCalls != 1 {
+		t.Fatalf("expected one coupon preparation, got %d", mockStore.prepareCalls)
 	}
 	if len(mockStore.recordDeliveryEvents) != 1 {
 		t.Fatalf("expected one delivery record, got %d", len(mockStore.recordDeliveryEvents))
@@ -108,8 +110,8 @@ func TestFulfillPaidOrderSkipsConfirmedDelivery(t *testing.T) {
 	if deliverer.sendCount != 0 {
 		t.Fatalf("expected no message send, got %d", deliverer.sendCount)
 	}
-	if mockStore.assignCalls != 0 {
-		t.Fatalf("expected no assignment, got %d", mockStore.assignCalls)
+	if mockStore.prepareCalls != 0 {
+		t.Fatalf("expected no coupon preparation, got %d", mockStore.prepareCalls)
 	}
 }
 
@@ -126,6 +128,7 @@ func TestReconcilePendingOrderCapturesApprovedOrder(t *testing.T) {
 			ListingID:                 66,
 			OrderNumber:               "ORD-103",
 			Status:                    "pending_payment",
+			CouponID:                  int64Ptr(701),
 			CurrencyCode:              "ILS",
 			SalePriceAmount:           1999,
 			ProviderCheckoutReference: "checkout-103",
@@ -190,19 +193,102 @@ func TestReconcilePendingOrderCapturesApprovedOrder(t *testing.T) {
 	}
 }
 
+func TestFulfillPaidOrderEscalatesReleasedHoldAfterSuccessfulPayment(t *testing.T) {
+	t.Parallel()
+
+	mockStore := &mockPaymentStore{
+		order: store.Order{
+			ID:                        104,
+			UserID:                    21,
+			ListingID:                 56,
+			OrderNumber:               "ORD-104",
+			Status:                    "paid",
+			FailureReason:             "checkout_hold_expired",
+			ProviderCheckoutReference: "checkout-104",
+		},
+	}
+
+	service := &Service{
+		logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		store:  mockStore,
+	}
+
+	if err := service.fulfillPaidOrder(context.Background(), 104); err != nil {
+		t.Fatalf("expected paid order escalation, got %v", err)
+	}
+
+	if mockStore.supportCaseCalls != 1 {
+		t.Fatalf("expected one support case escalation, got %d", mockStore.supportCaseCalls)
+	}
+	if len(mockStore.recordDeliveryEvents) != 0 {
+		t.Fatalf("expected no delivery events, got %d", len(mockStore.recordDeliveryEvents))
+	}
+}
+
+func TestStartCheckoutReleasesReservationWhenProviderCreationFails(t *testing.T) {
+	t.Parallel()
+
+	mockStore := &mockPaymentStore{
+		order: store.Order{
+			ID:              105,
+			UserID:          31,
+			ListingID:       90,
+			OrderNumber:     "ORD-105",
+			Status:          "draft",
+			CouponID:        int64Ptr(801),
+			CurrencyCode:    "ILS",
+			SalePriceAmount: 1299,
+		},
+	}
+	gateway := &stubPayPalGateway{createCheckoutErr: errors.New("paypal down")}
+
+	service := &Service{
+		logger:       slog.New(slog.NewTextHandler(io.Discard, nil)),
+		store:        mockStore,
+		providerName: "paypal",
+		paypal:       gateway,
+	}
+
+	_, err := service.StartCheckout(context.Background(), mockStore.order, store.Listing{
+		ID:           90,
+		MerchantName: "Cafe",
+		Title:        "ILS 20 coupon",
+	})
+	if err == nil {
+		t.Fatal("expected checkout creation to fail")
+	}
+
+	if len(mockStore.releaseCalls) != 1 {
+		t.Fatalf("expected one checkout release call, got %d", len(mockStore.releaseCalls))
+	}
+	if mockStore.releaseCalls[0].FailureReason != "checkout_provider_create_failed" {
+		t.Fatalf("unexpected failure reason: %+v", mockStore.releaseCalls[0])
+	}
+}
+
 type mockPaymentStore struct {
 	order                store.Order
 	user                 store.User
 	listing              store.Listing
 	coupon               store.Coupon
 	delivery             *store.CouponDelivery
-	assignCalls          int
+	prepareCalls         int
+	supportCaseCalls     int
 	recordDeliveryEvents []store.RecordDeliveryEventParams
+	releaseCalls         []store.ReleaseCheckoutReservationParams
 }
 
 func (m *mockPaymentStore) MarkOrderPendingPayment(ctx context.Context, params store.MarkOrderPendingPaymentParams) (store.Order, error) {
 	m.order.Status = "pending_payment"
 	m.order.ProviderCheckoutReference = params.ProviderCheckoutReference
+	return m.order, nil
+}
+
+func (m *mockPaymentStore) ReleaseCheckoutReservation(ctx context.Context, params store.ReleaseCheckoutReservationParams) (store.Order, error) {
+	m.releaseCalls = append(m.releaseCalls, params)
+	m.order.CouponID = nil
+	m.order.Status = params.OrderStatus
+	m.order.FailureReason = params.FailureReason
 	return m.order, nil
 }
 
@@ -237,10 +323,8 @@ func (m *mockPaymentStore) GetOrder(ctx context.Context, orderID int64) (store.O
 	return m.order, nil
 }
 
-func (m *mockPaymentStore) AssignAvailableCoupon(ctx context.Context, orderID int64) (store.Coupon, error) {
-	m.assignCalls++
-	couponID := m.coupon.ID
-	m.order.CouponID = &couponID
+func (m *mockPaymentStore) PrepareReservedCouponForDelivery(ctx context.Context, orderID int64) (store.Coupon, error) {
+	m.prepareCalls++
 	m.order.Status = "delivery_pending"
 	return m.coupon, nil
 }
@@ -274,6 +358,7 @@ func (m *mockPaymentStore) RecordDeliveryEvent(ctx context.Context, params store
 }
 
 func (m *mockPaymentStore) EnsureSupportCase(ctx context.Context, params store.EnsureSupportCaseParams) (store.SupportCase, bool, error) {
+	m.supportCaseCalls++
 	return store.SupportCase{ID: 1}, true, nil
 }
 
@@ -287,13 +372,15 @@ func (s *stubDeliverer) SendHTMLMessage(ctx context.Context, telegramUserID int6
 }
 
 type stubPayPalGateway struct {
-	orderSnapshot payPalOrderSnapshot
-	capture       payPalCapture
-	captureCalls  int
+	orderSnapshot     payPalOrderSnapshot
+	capture           payPalCapture
+	createCheckout    payPalCheckout
+	createCheckoutErr error
+	captureCalls      int
 }
 
 func (s *stubPayPalGateway) CreateCheckout(ctx context.Context, input payPalCreateCheckoutInput) (payPalCheckout, error) {
-	return payPalCheckout{}, nil
+	return s.createCheckout, s.createCheckoutErr
 }
 
 func (s *stubPayPalGateway) VerifyAndParseWebhook(ctx context.Context, headers http.Header, body []byte) (payPalWebhookEvent, error) {
@@ -328,5 +415,9 @@ func encryptTestCouponCode(t *testing.T, key string, couponCode string) ([]byte,
 }
 
 func timePtr(value time.Time) *time.Time {
+	return &value
+}
+
+func int64Ptr(value int64) *int64 {
 	return &value
 }

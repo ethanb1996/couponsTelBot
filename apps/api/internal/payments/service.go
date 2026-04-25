@@ -36,11 +36,12 @@ type CouponDeliverer interface {
 
 type paymentStore interface {
 	MarkOrderPendingPayment(ctx context.Context, params store.MarkOrderPendingPaymentParams) (store.Order, error)
+	ReleaseCheckoutReservation(ctx context.Context, params store.ReleaseCheckoutReservationParams) (store.Order, error)
 	RecordPaymentEvent(ctx context.Context, params store.RecordPaymentEventParams) (store.Payment, error)
 	GetOrderByProviderCheckoutReference(ctx context.Context, providerCheckoutReference string) (store.Order, error)
 	GetCouponDeliveryForOrder(ctx context.Context, orderID int64) (*store.CouponDelivery, error)
 	GetOrder(ctx context.Context, orderID int64) (store.Order, error)
-	AssignAvailableCoupon(ctx context.Context, orderID int64) (store.Coupon, error)
+	PrepareReservedCouponForDelivery(ctx context.Context, orderID int64) (store.Coupon, error)
 	GetCoupon(ctx context.Context, couponID int64) (store.Coupon, error)
 	GetUserByID(ctx context.Context, userID int64) (store.User, error)
 	GetListing(ctx context.Context, listingID int64) (store.Listing, error)
@@ -103,6 +104,7 @@ func (s *Service) StartCheckout(ctx context.Context, order store.Order, listing 
 		CancelURL:    s.appBaseURL + "/payments/paypal/cancel?order_number=" + order.OrderNumber,
 	})
 	if err != nil {
+		s.releaseFailedCheckout(ctx, order.ID, "checkout_provider_create_failed")
 		return CheckoutLink{}, err
 	}
 
@@ -110,6 +112,7 @@ func (s *Service) StartCheckout(ctx context.Context, order store.Order, listing 
 		OrderID:                   order.ID,
 		ProviderCheckoutReference: checkout.OrderID,
 	}); err != nil {
+		s.releaseFailedCheckout(ctx, order.ID, "checkout_mark_pending_failed")
 		return CheckoutLink{}, err
 	}
 
@@ -121,6 +124,7 @@ func (s *Service) StartCheckout(ctx context.Context, order store.Order, listing 
 		Amount:             order.SalePriceAmount,
 		CurrencyCode:       order.CurrencyCode,
 	}); err != nil {
+		s.releaseFailedCheckout(ctx, order.ID, "checkout_payment_record_failed")
 		return CheckoutLink{}, err
 	}
 
@@ -251,25 +255,22 @@ func (s *Service) fulfillPaidOrder(ctx context.Context, orderID int64) error {
 		return err
 	}
 
-	coupon, err := s.store.AssignAvailableCoupon(ctx, orderID)
-	if err != nil {
-		if !errors.Is(err, store.ErrCouponAlreadyAssigned) {
-			return err
-		}
-		order, err = s.store.GetOrder(ctx, orderID)
-		if err != nil {
-			return err
-		}
-		if order.CouponID == nil {
-			return store.ErrCouponAlreadyAssigned
-		}
-		coupon, err = s.store.GetCoupon(ctx, *order.CouponID)
-		if err != nil {
-			return err
-		}
-	} else {
-		order.CouponID = &coupon.ID
+	if order.CouponID == nil {
+		return s.escalatePaidOrderIssue(ctx, order, nil, "payment confirmed after checkout hold was released; manual refund review required")
 	}
+
+	coupon, err := s.store.PrepareReservedCouponForDelivery(ctx, orderID)
+	if err != nil {
+		switch {
+		case errors.Is(err, store.ErrReservedCouponRequired):
+			return s.escalatePaidOrderIssue(ctx, order, nil, "payment confirmed without a reserved coupon; manual refund review required")
+		case errors.Is(err, store.ErrReservedCouponInvalid):
+			return s.escalatePaidOrderIssue(ctx, order, order.CouponID, "reserved coupon is no longer deliverable after payment confirmation")
+		default:
+			return err
+		}
+	}
+	order.CouponID = &coupon.ID
 
 	user, err := s.store.GetUserByID(ctx, order.UserID)
 	if err != nil {
@@ -334,6 +335,33 @@ func (s *Service) recordFailedDelivery(ctx context.Context, orderID int64, coupo
 		CaseType:        "delivery_issue",
 		Priority:        "high",
 		Summary:         truncateText(fmt.Sprintf("Automatic delivery escalation for order %d: %s", orderID, returnErr), 255),
+		AssignedAdminID: "ops-job",
+	})
+	return err
+}
+
+func (s *Service) releaseFailedCheckout(ctx context.Context, orderID int64, failureReason string) {
+	if _, err := s.store.ReleaseCheckoutReservation(ctx, store.ReleaseCheckoutReservationParams{
+		OrderID:       orderID,
+		OrderStatus:   "failed",
+		FailureReason: failureReason,
+	}); err != nil {
+		s.logger.Error("failed to release checkout reservation",
+			"order_id", orderID,
+			"failure_reason", failureReason,
+			"error", err,
+		)
+	}
+}
+
+func (s *Service) escalatePaidOrderIssue(ctx context.Context, order store.Order, couponID *int64, summary string) error {
+	_, _, err := s.store.EnsureSupportCase(ctx, store.EnsureSupportCaseParams{
+		UserID:          &order.UserID,
+		OrderID:         &order.ID,
+		CouponID:        couponID,
+		CaseType:        "payment_issue",
+		Priority:        "high",
+		Summary:         truncateText(fmt.Sprintf("Order %s requires manual payment review: %s", order.OrderNumber, summary), 255),
 		AssignedAdminID: "ops-job",
 	})
 	return err

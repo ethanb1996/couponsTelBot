@@ -257,6 +257,12 @@ type MarkOrderPendingPaymentParams struct {
 	ProviderCheckoutReference string
 }
 
+type ReleaseCheckoutReservationParams struct {
+	OrderID       int64
+	OrderStatus   string
+	FailureReason string
+}
+
 type RecordPaymentEventParams struct {
 	OrderID            int64
 	ProviderName       string

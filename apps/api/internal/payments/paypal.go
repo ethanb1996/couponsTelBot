@@ -131,8 +131,9 @@ func (c *paypalClient) CreateCheckout(ctx context.Context, input payPalCreateChe
 	var response struct {
 		ID    string `json:"id"`
 		Links []struct {
-			Href string `json:"href"`
-			Rel  string `json:"rel"`
+			Href   string `json:"href"`
+			Rel    string `json:"rel"`
+			Method string `json:"method"`
 		} `json:"links"`
 	}
 
@@ -140,22 +141,56 @@ func (c *paypalClient) CreateCheckout(ctx context.Context, input payPalCreateChe
 		return payPalCheckout{}, err
 	}
 
-	approvalURL := ""
-	for _, link := range response.Links {
-		if link.Rel == "approve" {
-			approvalURL = link.Href
-			break
-		}
-	}
+	approvalURL := approvalURLFromPayPalLinks(response.Links)
 
 	if strings.TrimSpace(response.ID) == "" || strings.TrimSpace(approvalURL) == "" {
-		return payPalCheckout{}, fmt.Errorf("payments: paypal checkout response missing order id or approval url")
+		return payPalCheckout{}, fmt.Errorf("payments: paypal checkout response missing order id or approval url (order_id=%q rels=%s)", strings.TrimSpace(response.ID), summarizePayPalLinks(response.Links))
 	}
 
 	return payPalCheckout{
 		OrderID:     response.ID,
 		ApprovalURL: approvalURL,
 	}, nil
+}
+
+func approvalURLFromPayPalLinks(links []struct {
+	Href   string `json:"href"`
+	Rel    string `json:"rel"`
+	Method string `json:"method"`
+}) string {
+	preferredRels := []string{"approve", "payer-action", "approval_url"}
+	for _, rel := range preferredRels {
+		for _, link := range links {
+			if strings.EqualFold(strings.TrimSpace(link.Rel), rel) && strings.TrimSpace(link.Href) != "" {
+				return strings.TrimSpace(link.Href)
+			}
+		}
+	}
+
+	for _, link := range links {
+		if strings.EqualFold(strings.TrimSpace(link.Method), http.MethodGet) && strings.TrimSpace(link.Href) != "" {
+			return strings.TrimSpace(link.Href)
+		}
+	}
+
+	return ""
+}
+
+func summarizePayPalLinks(links []struct {
+	Href   string `json:"href"`
+	Rel    string `json:"rel"`
+	Method string `json:"method"`
+}) string {
+	if len(links) == 0 {
+		return "[]"
+	}
+
+	parts := make([]string, 0, len(links))
+	for _, link := range links {
+		parts = append(parts, fmt.Sprintf("%s:%s", strings.TrimSpace(link.Rel), strings.TrimSpace(link.Method)))
+	}
+
+	return "[" + strings.Join(parts, ", ") + "]"
 }
 
 func (c *paypalClient) VerifyAndParseWebhook(ctx context.Context, headers http.Header, body []byte) (payPalWebhookEvent, error) {

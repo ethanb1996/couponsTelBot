@@ -201,13 +201,27 @@ func (p *Postgres) GetListing(ctx context.Context, listingID int64) (Listing, er
 			status,
 			created_by_admin_id,
 			published_at,
+			(
+				SELECT COUNT(*)
+				FROM coupons c
+				WHERE c.listing_id = listings.id
+					AND c.inventory_status = 'available'
+					AND c.expiry_at > NOW()
+			) AS available_inventory_count,
+			(
+				SELECT MIN(c.expiry_at)
+				FROM coupons c
+				WHERE c.listing_id = listings.id
+					AND c.inventory_status = 'available'
+					AND c.expiry_at > NOW()
+			) AS next_coupon_expiry_at,
 			created_at,
 			updated_at
 		FROM listings
 		WHERE id = $1
 	`, listingID)
 
-	listing, err := scanListing(row)
+	listing, err := scanListingWithInventory(row)
 	if err != nil {
 		return Listing{}, mapStoreErr(err)
 	}

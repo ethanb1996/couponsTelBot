@@ -112,6 +112,10 @@ func TestLoadAppliesDefaultsForOptionalEnvironmentVariables(t *testing.T) {
 		t.Fatalf("expected default OPS_RECONCILE_AFTER, got %s", cfg.OpsReconcileAfter)
 	}
 
+	if cfg.OpsCheckoutHoldDuration != 10*time.Minute {
+		t.Fatalf("expected default OPS_CHECKOUT_HOLD_DURATION, got %s", cfg.OpsCheckoutHoldDuration)
+	}
+
 	if cfg.OpsBatchSize != 25 {
 		t.Fatalf("expected default OPS_BATCH_SIZE, got %d", cfg.OpsBatchSize)
 	}
@@ -133,6 +137,7 @@ func TestLoadAppliesExplicitDatabaseSettings(t *testing.T) {
 	t.Setenv("OPS_SWEEP_INTERVAL", "2m")
 	t.Setenv("OPS_DELIVERY_ALERT_AFTER", "7m")
 	t.Setenv("OPS_RECONCILE_AFTER", "3m")
+	t.Setenv("OPS_CHECKOUT_HOLD_DURATION", "11m")
 	t.Setenv("OPS_BATCH_SIZE", "15")
 	t.Setenv("TELEGRAM_BOT_TOKEN", "bot-token")
 	t.Setenv("TELEGRAM_WEBHOOK_SECRET", "telegram-secret")
@@ -192,6 +197,10 @@ func TestLoadAppliesExplicitDatabaseSettings(t *testing.T) {
 
 	if cfg.OpsReconcileAfter != 3*time.Minute {
 		t.Fatalf("expected explicit OPS_RECONCILE_AFTER, got %s", cfg.OpsReconcileAfter)
+	}
+
+	if cfg.OpsCheckoutHoldDuration != 11*time.Minute {
+		t.Fatalf("expected explicit OPS_CHECKOUT_HOLD_DURATION, got %s", cfg.OpsCheckoutHoldDuration)
 	}
 
 	if cfg.OpsBatchSize != 15 {
@@ -355,6 +364,11 @@ func TestLoadReadsDotEnvFromCurrentWorkingDirectory(t *testing.T) {
 		"DATABASE_MAX_CONN_IDLE_TIME",
 		"DATABASE_HEALTH_CHECK_PERIOD",
 		"DATABASE_QUERY_EXEC_MODE",
+		"OPS_SWEEP_INTERVAL",
+		"OPS_DELIVERY_ALERT_AFTER",
+		"OPS_RECONCILE_AFTER",
+		"OPS_CHECKOUT_HOLD_DURATION",
+		"OPS_BATCH_SIZE",
 		"TELEGRAM_BOT_TOKEN",
 		"TELEGRAM_WEBHOOK_SECRET",
 		"PAYMENT_PROVIDER_NAME",

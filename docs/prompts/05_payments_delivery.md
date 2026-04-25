@@ -4,10 +4,11 @@ You are a senior Go engineer. Implement payment handling and coupon delivery for
 
 ## Goal
 After a user presses `Buy`, the system must:
-- create an order
+- reserve exactly one available coupon for a short checkout hold
+- create an order linked to that reserved coupon
 - start payment with PayPal in `ILS`
 - wait for provider-confirmed success
-- assign exactly one coupon from inventory
+- finalize the same reserved coupon after success
 - deliver that coupon in Telegram
 
 ## Payment Design
@@ -30,16 +31,24 @@ Use a PayPal-hosted checkout link rather than collecting card details directly.
 
 ## Required Flow
 1. user confirms purchase
-2. system creates a PayPal checkout order and payment record
-3. bot returns a PayPal approval link or button to the user
-4. user pays in PayPal with a supported funding source such as card or wallet
-5. PayPal webhook is verified by the backend
-6. backend captures the approved PayPal order if needed
-7. backend records the successful payment and marks the order `paid`
-8. system assigns one available coupon transactionally
-9. system records coupon delivery
-10. bot sends coupon to user
-11. order becomes `delivered`
+2. system reserves one available coupon transactionally
+3. system creates a PayPal checkout order and payment record for that reserved coupon
+4. bot returns a PayPal approval link or button to the user and states the checkout-hold window
+5. if PayPal checkout creation fails, the reservation is released immediately
+6. if the checkout hold expires before payment success, the reservation is released automatically and the order is marked cancelled or expired
+7. user pays in PayPal with a supported funding source such as card or wallet
+8. PayPal webhook is verified by the backend
+9. backend captures the approved PayPal order if needed
+10. backend records the successful payment and marks the order `paid`
+11. system finalizes the reserved coupon for delivery
+12. system records coupon delivery
+13. bot sends coupon to user
+14. order becomes `delivered`
+
+Late payment handling:
+- if payment succeeds after the hold was already released, record the payment
+- do not assign a different coupon automatically
+- create a support case for manual refund or operator review
 
 ## No-Refund Policy Handling
 The user-facing product policy is:
@@ -66,9 +75,11 @@ What still must exist:
 
 ## Acceptance Criteria
 - user can complete checkout in `ILS`
-- PayPal approval link is created after purchase confirmation
+- PayPal approval link is created only after one coupon is reserved
+- sold-out listings do not expose `Buy` or `Buy Now` actions in Telegram
 - verified PayPal webhook marks the order paid
-- exactly one coupon is assigned to the order
+- exactly one reserved coupon is finalized to the order
 - coupon is delivered in Telegram after payment success
 - duplicate webhooks do not double-deliver
+- expired checkout holds release inventory back to `available`
 - support case can be opened for a bad delivery or invalid coupon complaint

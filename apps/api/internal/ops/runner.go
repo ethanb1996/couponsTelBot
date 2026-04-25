@@ -20,10 +20,11 @@ type Runner struct {
 	sweepInterval      time.Duration
 	deliveryAlertAfter time.Duration
 	reconcileAfter     time.Duration
+	checkoutHoldAfter  time.Duration
 	batchSize          int
 }
 
-func NewRunner(logger *slog.Logger, repo *store.Postgres, reconciler PaymentReconciler, sweepInterval time.Duration, deliveryAlertAfter time.Duration, reconcileAfter time.Duration, batchSize int) *Runner {
+func NewRunner(logger *slog.Logger, repo *store.Postgres, reconciler PaymentReconciler, sweepInterval time.Duration, deliveryAlertAfter time.Duration, reconcileAfter time.Duration, checkoutHoldAfter time.Duration, batchSize int) *Runner {
 	return &Runner{
 		logger:             logger,
 		store:              repo,
@@ -31,6 +32,7 @@ func NewRunner(logger *slog.Logger, repo *store.Postgres, reconciler PaymentReco
 		sweepInterval:      sweepInterval,
 		deliveryAlertAfter: deliveryAlertAfter,
 		reconcileAfter:     reconcileAfter,
+		checkoutHoldAfter:  checkoutHoldAfter,
 		batchSize:          batchSize,
 	}
 }
@@ -64,6 +66,7 @@ func (r *Runner) runOnce(parent context.Context) {
 	defer cancel()
 
 	r.runSweep(ctx)
+	r.runCheckoutHoldRelease(ctx)
 	r.runDeliveryDetection(ctx)
 	r.runPaymentReconciliation(ctx)
 }
@@ -83,6 +86,23 @@ func (r *Runner) runSweep(ctx context.Context) {
 		"expired_coupons", result.ExpiredCoupons,
 		"expired_listings", result.ExpiredListings,
 		"sold_out_listings", result.SoldOutListings,
+	)
+}
+
+func (r *Runner) runCheckoutHoldRelease(ctx context.Context) {
+	released, err := r.store.ReleaseExpiredCheckoutHolds(ctx, r.checkoutHoldAfter)
+	if err != nil {
+		r.logger.Error("failed to release expired checkout holds", "error", err)
+		return
+	}
+
+	if released == 0 {
+		return
+	}
+
+	r.logger.Warn("released expired checkout holds",
+		"released_orders", released,
+		"hold_duration", r.checkoutHoldAfter.String(),
 	)
 }
 

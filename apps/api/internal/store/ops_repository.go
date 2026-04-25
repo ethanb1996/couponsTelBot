@@ -125,7 +125,7 @@ func (p *Postgres) SweepExpiredInventory(ctx context.Context) (InventorySweepRes
 			inventory_status = 'expired',
 			updated_at = NOW()
 		WHERE expiry_at <= NOW()
-			AND inventory_status IN ('available', 'assigned')
+			AND inventory_status IN ('available', 'reserved', 'assigned')
 	`)
 	if err != nil {
 		return InventorySweepResult{}, err
@@ -347,6 +347,97 @@ func (p *Postgres) ListPendingPaymentReconciliationCandidates(ctx context.Contex
 	}
 
 	return candidates, nil
+}
+
+func (p *Postgres) ReleaseExpiredCheckoutHolds(ctx context.Context, olderThan time.Duration) (int64, error) {
+	if err := p.ensurePool(); err != nil {
+		return 0, err
+	}
+
+	cutoff := time.Now().UTC().Add(-olderThan)
+	tx, err := p.Pool.Begin(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer func() {
+		_ = tx.Rollback(ctx)
+	}()
+
+	rows, err := tx.Query(ctx, `
+		SELECT o.id, o.coupon_id
+		FROM orders o
+		WHERE o.status = 'pending_payment'
+			AND o.coupon_id IS NOT NULL
+			AND COALESCE(o.placed_at, o.updated_at, o.created_at) <= $1
+			AND NOT EXISTS (
+				SELECT 1
+				FROM payments p
+				WHERE p.order_id = o.id
+					AND p.status IN ('authorized', 'captured')
+			)
+		FOR UPDATE SKIP LOCKED
+	`, cutoff)
+	if err != nil {
+		return 0, err
+	}
+	defer rows.Close()
+
+	orderIDs := make([]int64, 0)
+	couponIDs := make([]int64, 0)
+	for rows.Next() {
+		var orderID int64
+		var couponID *int64
+		if err := rows.Scan(&orderID, &couponID); err != nil {
+			return 0, err
+		}
+		orderIDs = append(orderIDs, orderID)
+		if couponID != nil {
+			couponIDs = append(couponIDs, *couponID)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+
+	if len(orderIDs) == 0 {
+		if err := tx.Commit(ctx); err != nil {
+			return 0, err
+		}
+		return 0, nil
+	}
+
+	if len(couponIDs) > 0 {
+		_, err = tx.Exec(ctx, `
+			UPDATE coupons
+			SET
+				inventory_status = 'available',
+				updated_at = NOW()
+			WHERE id = ANY($1)
+				AND inventory_status = 'reserved'
+		`, couponIDs)
+		if err != nil {
+			return 0, err
+		}
+	}
+
+	_, err = tx.Exec(ctx, `
+		UPDATE orders
+		SET
+			coupon_id = NULL,
+			status = 'cancelled',
+			failure_reason = 'checkout_hold_expired',
+			updated_at = NOW()
+		WHERE id = ANY($1)
+	`, orderIDs)
+	if err != nil {
+		return 0, err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return 0, err
+	}
+
+	return int64(len(orderIDs)), nil
 }
 
 func (p *Postgres) EnsureSupportCase(ctx context.Context, params EnsureSupportCaseParams) (SupportCase, bool, error) {

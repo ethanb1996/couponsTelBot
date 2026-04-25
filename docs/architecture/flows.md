@@ -23,10 +23,11 @@ Detailed steps:
 1. Operator acquires coupon inventory from an approved source.
 2. Operator verifies value, expiry, transferability, and sale price.
 3. Coupon is stored securely as `available`.
-4. When a user starts checkout, the system may reserve a coupon or reserve inventory capacity.
-5. After successful payment, one coupon is assigned to the order and becomes `assigned`.
-6. After Telegram delivery succeeds, coupon becomes `delivered`.
-7. Later, coupon may move to:
+4. When a user starts checkout, the system reserves one specific coupon and marks it `reserved`.
+5. If checkout is abandoned or expires, the coupon returns to `available`.
+6. After successful payment, the same reserved coupon is finalized to the order and becomes `assigned`.
+7. After Telegram delivery succeeds, coupon becomes `delivered`.
+8. Later, coupon may move to:
    - `used` if confirmed redeemed
    - `expired` if no longer valid
    - `voided` if invalidated internally
@@ -49,14 +50,15 @@ State flow:
 
 Detailed steps:
 1. User selects a listing in Telegram.
-2. System creates an order in `draft`.
+2. System creates an order in `draft` and reserves one coupon.
 3. User is shown the final-sale and no-refund terms.
 4. User proceeds to payment and order becomes `pending_payment`.
-5. Payment provider confirms success and order becomes `paid`.
-6. Coupon assignment begins and order becomes `delivery_pending`.
-7. Coupon is sent in Telegram and order becomes `delivered`.
-8. If payment fails, order becomes `failed`.
-9. If a serious post-delivery problem occurs, order may become `disputed`.
+5. If checkout creation fails or the hold expires, the order becomes `failed` or `cancelled` and the reserved coupon is released.
+6. Payment provider confirms success and order becomes `paid`.
+7. Reserved coupon finalization begins and order becomes `delivery_pending`.
+8. Coupon is sent in Telegram and order becomes `delivered`.
+9. If payment fails, order becomes `failed`.
+10. If a serious post-delivery problem occurs, order may become `disputed`.
 
 Guardrails:
 - no order should move to `paid` without provider confirmation
@@ -77,17 +79,20 @@ Guardrails:
    - redemption instructions
    - final-sale disclosure
    - explicit statement that no refunds are available
+   - sold-out notice when no inventory is available
 6. User confirms purchase.
-7. Bot creates a PayPal checkout order and sends the PayPal approval link.
-8. User completes payment in PayPal with a supported funding source.
-9. Backend verifies the PayPal webhook and captures the approved order if needed.
-10. On confirmed capture, system assigns a coupon and sends it to the user in Telegram.
-11. Bot confirms delivery and gives support contact path.
+7. Bot reserves one coupon, creates a PayPal checkout order, and sends the PayPal approval link.
+8. Bot states that the coupon is reserved only for the checkout-hold window.
+9. User completes payment in PayPal with a supported funding source.
+10. Backend verifies the PayPal webhook and captures the approved order if needed.
+11. On confirmed capture, system finalizes the reserved coupon and sends it to the user in Telegram.
+12. Bot confirms delivery and gives support contact path.
 
 Message rule:
 - every promotional or catalog message from the bot should contain between 1 and 3 coupon options
 - each option should be individually purchasable from the same message via its own `Buy` button
 - pressing one `Buy` button should create an order only for that selected coupon, not for the whole message
+- if a listing has zero available coupons, purchase buttons should be hidden and only non-purchase actions remain
 
 ### Complaint Flow
 1. User reports coupon invalid, delivery problem, or payment problem.
@@ -162,7 +167,9 @@ Any exception should be handled manually outside the normal product flow and rec
 
 ### Payment Succeeds but Coupon Cannot Be Assigned
 Handling:
-- order remains `delivery_pending` or becomes `failed`
+- payment is recorded successfully
+- no alternate coupon is auto-assigned
+- order is escalated for manual refund or support review
 - support case is opened
 - operator investigates inventory state immediately
 

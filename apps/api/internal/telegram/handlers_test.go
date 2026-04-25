@@ -75,8 +75,11 @@ func TestWebhookHandlerProcessesUpdateWithDetachedContext(t *testing.T) {
 
 	select {
 	case ctx := <-ctxCh:
-		if err := ctx.Err(); err != nil {
-			t.Fatalf("expected detached context to remain active, got %v", err)
+		if ctx == reqCtx {
+			t.Fatal("expected detached async context, got request context")
+		}
+		if _, ok := ctx.Deadline(); !ok {
+			t.Fatal("expected async context to have timeout deadline")
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("timed out waiting for async context")

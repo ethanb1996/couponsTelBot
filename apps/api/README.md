@@ -34,10 +34,13 @@ The API accepts a plain PostgreSQL URL and uses `pgxpool` directly. No ORM or Su
 
 The MVP payment flow uses PayPal-hosted checkout links.
 
-- The bot creates an internal order, then requests a PayPal approval link from the backend.
+- The bot reserves one coupon before showing the PayPal approval link.
+- The user sees a checkout-ready message only after that reservation succeeds.
+- The reservation is temporary and expires automatically if payment is not confirmed in time.
 - Users pay on PayPal with whatever funding sources the merchant account exposes, such as card or wallet.
 - The backend verifies PayPal webhook signatures through PayPal's verification API.
-- Coupon delivery happens only after a verified PayPal success event.
+- Coupon delivery happens only after a verified PayPal success event for the same reserved order.
+- If a late payment arrives after the checkout hold has already expired, the payment is recorded and escalated for manual refund or support review instead of auto-delivering a different coupon.
 
 Required payment settings:
 
@@ -119,7 +122,15 @@ The API now runs a small in-process ops loop for launch readiness:
 - `OPS_SWEEP_INTERVAL` controls how often the service sweeps expired coupons and listing statuses.
 - `OPS_DELIVERY_ALERT_AFTER` controls when paid-but-undelivered orders are escalated into support cases.
 - `OPS_RECONCILE_AFTER` controls when stale PayPal checkouts are rechecked for delayed callbacks.
+- `OPS_CHECKOUT_HOLD_DURATION` controls how long a reserved coupon stays on hold while the user completes PayPal checkout.
 - `OPS_BATCH_SIZE` controls how many orders each ops cycle inspects per category.
+
+Checkout-hold behavior:
+
+- creating a checkout now reserves exactly one `available` coupon and marks it `reserved`
+- sold-out listings no longer show buy actions in Telegram
+- stale `pending_payment` orders older than `OPS_CHECKOUT_HOLD_DURATION` are cancelled automatically
+- releasing a stale hold returns the coupon to `available`, clears `orders.coupon_id`, and stores `failure_reason=checkout_hold_expired`
 
 Admin operations now keep audit rows for source changes, listing changes, coupon inventory changes, and support outcomes. The dashboard also highlights:
 

@@ -77,6 +77,7 @@ func main() {
 		cfg.OpsSweepInterval,
 		cfg.OpsDeliveryAlertAfter,
 		cfg.OpsReconcileAfter,
+		cfg.OpsCheckoutHoldDuration,
 		cfg.OpsBatchSize,
 	).Start(ctx)
 

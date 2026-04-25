@@ -13,6 +13,7 @@ import (
 
 const (
 	inventoryStatusAvailable = "available"
+	inventoryStatusReserved  = "reserved"
 	inventoryStatusAssigned  = "assigned"
 	inventoryStatusDelivered = "delivered"
 
@@ -24,6 +25,7 @@ const (
 	orderStatusDeliveryPending = "delivery_pending"
 	orderStatusDelivered       = "delivered"
 	orderStatusFailed          = "failed"
+	orderStatusCancelled       = "cancelled"
 	orderStatusDisputed        = "disputed"
 
 	paymentStatusPending    = "pending"
@@ -48,6 +50,8 @@ var (
 	ErrOrderNotReadyForPayment = errors.New("store: order is not ready for payment")
 	ErrOrderNotReadyForCoupon  = errors.New("store: order is not ready for coupon assignment")
 	ErrCouponAlreadyAssigned   = errors.New("store: coupon already assigned to order")
+	ErrReservedCouponRequired  = errors.New("store: reserved coupon required before delivery")
+	ErrReservedCouponInvalid   = errors.New("store: reserved coupon is not deliverable")
 	ErrPaymentRequired         = errors.New("store: successful payment required before delivery")
 	ErrCouponMismatch          = errors.New("store: coupon does not match order assignment")
 )
@@ -354,7 +358,15 @@ func (p *Postgres) CreateDraftOrder(ctx context.Context, params CreateDraftOrder
 		return Order{}, fmt.Errorf("%w: final sale acknowledgement timestamp is required", ErrInvalidArgument)
 	}
 
-	listing, availableCount, err := p.loadListingAvailability(ctx, params.ListingID)
+	tx, err := p.Pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return Order{}, err
+	}
+	defer func() {
+		_ = tx.Rollback(ctx)
+	}()
+
+	listing, availableCount, err := p.loadListingAvailabilityForUpdate(ctx, tx, params.ListingID)
 	if err != nil {
 		return Order{}, err
 	}
@@ -365,16 +377,22 @@ func (p *Postgres) CreateDraftOrder(ctx context.Context, params CreateDraftOrder
 		return Order{}, ErrListingSoldOut
 	}
 
-	row := p.Pool.QueryRow(ctx, `
+	coupon, err := reserveAvailableCoupon(ctx, tx, listing.ID)
+	if err != nil {
+		return Order{}, err
+	}
+
+	row := tx.QueryRow(ctx, `
 		INSERT INTO orders (
 			user_id,
 			listing_id,
+			coupon_id,
 			order_number,
 			status,
 			currency_code,
 			sale_price_amount,
 			final_sale_acknowledged_at
-		) VALUES ($1, $2, $3, 'draft', $4, $5, $6)
+		) VALUES ($1, $2, $3, $4, 'draft', $5, $6, $7)
 		RETURNING
 			id,
 			user_id,
@@ -394,6 +412,7 @@ func (p *Postgres) CreateDraftOrder(ctx context.Context, params CreateDraftOrder
 	`,
 		params.UserID,
 		params.ListingID,
+		coupon.ID,
 		params.OrderNumber,
 		listing.CurrencyCode,
 		listing.SalePriceAmount,
@@ -403,6 +422,10 @@ func (p *Postgres) CreateDraftOrder(ctx context.Context, params CreateDraftOrder
 	order, err := scanOrder(row)
 	if err != nil {
 		return Order{}, mapStoreErr(err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return Order{}, err
 	}
 
 	return order, nil
@@ -454,6 +477,82 @@ func (p *Postgres) MarkOrderPendingPayment(ctx context.Context, params MarkOrder
 	}
 
 	return order, nil
+}
+
+func (p *Postgres) ReleaseCheckoutReservation(ctx context.Context, params ReleaseCheckoutReservationParams) (Order, error) {
+	if err := p.ensurePool(); err != nil {
+		return Order{}, err
+	}
+	if params.OrderID == 0 {
+		return Order{}, fmt.Errorf("%w: order id is required", ErrInvalidArgument)
+	}
+	if strings.TrimSpace(params.OrderStatus) == "" {
+		return Order{}, fmt.Errorf("%w: order status is required", ErrInvalidArgument)
+	}
+
+	tx, err := p.Pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return Order{}, err
+	}
+	defer func() {
+		_ = tx.Rollback(ctx)
+	}()
+
+	order, err := loadOrderForUpdate(ctx, tx, params.OrderID)
+	if err != nil {
+		return Order{}, err
+	}
+
+	if order.CouponID != nil {
+		_, err = tx.Exec(ctx, `
+			UPDATE coupons
+			SET
+				inventory_status = 'available',
+				updated_at = NOW()
+			WHERE id = $1
+				AND inventory_status = 'reserved'
+		`, *order.CouponID)
+		if err != nil {
+			return Order{}, err
+		}
+	}
+
+	row := tx.QueryRow(ctx, `
+		UPDATE orders
+		SET
+			coupon_id = NULL,
+			status = $2,
+			failure_reason = $3,
+			updated_at = NOW()
+		WHERE id = $1
+		RETURNING
+			id,
+			user_id,
+			listing_id,
+			coupon_id,
+			order_number,
+			status,
+			currency_code,
+			sale_price_amount,
+			provider_checkout_reference,
+			final_sale_acknowledged_at,
+			failure_reason,
+			placed_at,
+			delivered_at,
+			created_at,
+			updated_at
+	`, params.OrderID, params.OrderStatus, params.FailureReason)
+
+	releasedOrder, err := scanOrder(row)
+	if err != nil {
+		return Order{}, mapStoreErr(err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return Order{}, err
+	}
+
+	return releasedOrder, nil
 }
 
 func (p *Postgres) GetOrder(ctx context.Context, orderID int64) (Order, error) {
@@ -570,7 +669,8 @@ func (p *Postgres) RecordPaymentEvent(ctx context.Context, params RecordPaymentE
 			status = $2,
 			failure_reason = CASE
 				WHEN $2 = 'failed' THEN $3
-				ELSE ''
+				WHEN $2 = 'pending_payment' THEN ''
+				ELSE failure_reason
 			END,
 			updated_at = NOW()
 		WHERE id = $1
@@ -627,6 +727,138 @@ func (p *Postgres) GetCoupon(ctx context.Context, couponID int64) (Coupon, error
 	coupon, err := scanCoupon(row)
 	if err != nil {
 		return Coupon{}, mapStoreErr(err)
+	}
+
+	return coupon, nil
+}
+
+func (p *Postgres) PrepareReservedCouponForDelivery(ctx context.Context, orderID int64) (Coupon, error) {
+	if err := p.ensurePool(); err != nil {
+		return Coupon{}, err
+	}
+	if orderID == 0 {
+		return Coupon{}, fmt.Errorf("%w: order id is required", ErrInvalidArgument)
+	}
+
+	tx, err := p.Pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return Coupon{}, err
+	}
+	defer func() {
+		_ = tx.Rollback(ctx)
+	}()
+
+	order, err := loadOrderForUpdate(ctx, tx, orderID)
+	if err != nil {
+		return Coupon{}, err
+	}
+	if order.CouponID == nil {
+		return Coupon{}, ErrReservedCouponRequired
+	}
+	if order.Status != orderStatusPaid && order.Status != orderStatusDeliveryPending && order.Status != orderStatusDelivered {
+		return Coupon{}, ErrOrderNotReadyForCoupon
+	}
+
+	hasSuccessfulPayment, err := orderHasSuccessfulPayment(ctx, tx, order.ID)
+	if err != nil {
+		return Coupon{}, err
+	}
+	if !hasSuccessfulPayment {
+		return Coupon{}, ErrPaymentRequired
+	}
+
+	row := tx.QueryRow(ctx, `
+		SELECT
+			id,
+			listing_id,
+			source_id,
+			merchant_name,
+			coupon_title,
+			coupon_value_amount,
+			sale_price_amount,
+			currency_code,
+			coupon_code_ciphertext,
+			coupon_code_nonce,
+			coupon_masked_display,
+			expiry_at,
+			transferability_status,
+			inventory_status,
+			rights_verified_at,
+			rights_verification_note,
+			acquired_cost_amount,
+			acquired_at,
+			created_at,
+			updated_at
+		FROM coupons
+		WHERE id = $1
+		FOR UPDATE
+	`, *order.CouponID)
+
+	coupon, err := scanCoupon(row)
+	if err != nil {
+		return Coupon{}, mapStoreErr(err)
+	}
+
+	if !coupon.ExpiryAt.After(time.Now().UTC()) {
+		return Coupon{}, ErrReservedCouponInvalid
+	}
+
+	switch coupon.InventoryStatus {
+	case inventoryStatusReserved:
+		row = tx.QueryRow(ctx, `
+			UPDATE coupons
+			SET
+				inventory_status = 'assigned',
+				updated_at = NOW()
+			WHERE id = $1
+			RETURNING
+				id,
+				listing_id,
+				source_id,
+				merchant_name,
+				coupon_title,
+				coupon_value_amount,
+				sale_price_amount,
+				currency_code,
+				coupon_code_ciphertext,
+				coupon_code_nonce,
+				coupon_masked_display,
+				expiry_at,
+				transferability_status,
+				inventory_status,
+				rights_verified_at,
+				rights_verification_note,
+				acquired_cost_amount,
+				acquired_at,
+				created_at,
+				updated_at
+		`, coupon.ID)
+		coupon, err = scanCoupon(row)
+		if err != nil {
+			return Coupon{}, mapStoreErr(err)
+		}
+	case inventoryStatusAssigned, inventoryStatusDelivered:
+		// Keep the already-linked coupon for idempotent delivery handling.
+	default:
+		return Coupon{}, ErrReservedCouponInvalid
+	}
+
+	_, err = tx.Exec(ctx, `
+		UPDATE orders
+		SET
+			status = CASE
+				WHEN status = 'paid' THEN 'delivery_pending'
+				ELSE status
+			END,
+			updated_at = NOW()
+		WHERE id = $1
+	`, order.ID)
+	if err != nil {
+		return Coupon{}, err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return Coupon{}, err
 	}
 
 	return coupon, nil
@@ -921,8 +1153,8 @@ func (p *Postgres) ensurePool() error {
 	return nil
 }
 
-func (p *Postgres) loadListingAvailability(ctx context.Context, listingID int64) (Listing, int64, error) {
-	row := p.Pool.QueryRow(ctx, `
+func (p *Postgres) loadListingAvailabilityForUpdate(ctx context.Context, tx pgx.Tx, listingID int64) (Listing, int64, error) {
+	row := tx.QueryRow(ctx, `
 		SELECT
 			id,
 			merchant_name,
@@ -949,6 +1181,7 @@ func (p *Postgres) loadListingAvailability(ctx context.Context, listingID int64)
 			) AS available_inventory_count
 		FROM listings
 		WHERE id = $1
+		FOR UPDATE
 	`, listingID)
 
 	var listing Listing
@@ -980,6 +1213,62 @@ func (p *Postgres) loadListingAvailability(ctx context.Context, listingID int64)
 	}
 
 	return listing, availableInventoryCount, nil
+}
+
+func reserveAvailableCoupon(ctx context.Context, tx pgx.Tx, listingID int64) (Coupon, error) {
+	var couponID int64
+	err := tx.QueryRow(ctx, `
+		SELECT id
+		FROM coupons
+		WHERE listing_id = $1
+			AND inventory_status = 'available'
+			AND expiry_at > NOW()
+		ORDER BY expiry_at ASC, id ASC
+		FOR UPDATE SKIP LOCKED
+		LIMIT 1
+	`, listingID).Scan(&couponID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Coupon{}, ErrListingSoldOut
+		}
+		return Coupon{}, err
+	}
+
+	row := tx.QueryRow(ctx, `
+		UPDATE coupons
+		SET
+			inventory_status = 'reserved',
+			updated_at = NOW()
+		WHERE id = $1
+		RETURNING
+			id,
+			listing_id,
+			source_id,
+			merchant_name,
+			coupon_title,
+			coupon_value_amount,
+			sale_price_amount,
+			currency_code,
+			coupon_code_ciphertext,
+			coupon_code_nonce,
+			coupon_masked_display,
+			expiry_at,
+			transferability_status,
+			inventory_status,
+			rights_verified_at,
+			rights_verification_note,
+			acquired_cost_amount,
+			acquired_at,
+			created_at,
+			updated_at
+	`, couponID)
+
+	coupon, err := scanCoupon(row)
+	if err != nil {
+		return Coupon{}, mapStoreErr(err)
+	}
+
+	return coupon, nil
 }
 
 func loadOrderForUpdate(ctx context.Context, tx pgx.Tx, orderID int64) (Order, error) {
