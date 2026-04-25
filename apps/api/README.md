@@ -100,6 +100,16 @@ Notes:
 - `down` reverts only the most recently applied local migration using the matching `.down.sql` file.
 - This is safe to use against Supabase with the current pooled connection string because the runner uses normal PostgreSQL transactions and table locks, not session-level migration locks.
 
+## Catalog Import
+
+To import external catalog listings from a HAR export and download their primary product photos into `data/photos`, run:
+
+```powershell
+go run ./apps/api/cmd/import_catalog -input data/GetCategoryById_6982.txt -photos-dir data/photos
+```
+
+Use `-dry-run` to validate the HAR and see how many sources/listings would be imported without touching the database or downloading files.
+
 ## Optional Database Settings
 
 In addition to `DATABASE_URL`, the app supports these portable `pgxpool` settings:

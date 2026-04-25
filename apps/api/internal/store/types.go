@@ -40,6 +40,8 @@ type Listing struct {
 	TermsSummary            string
 	RedemptionInstructions  string
 	FinalSaleDisclosureText string
+	PhotoKey                string
+	ExternalImportKey       string
 	Status                  string
 	CreatedByAdminID        string
 	PublishedAt             *time.Time
