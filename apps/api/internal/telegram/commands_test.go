@@ -14,8 +14,8 @@ func TestListingOfferKeyboardHidesGetCouponForSoldOutListing(t *testing.T) {
 	service := &BotService{}
 	keyboard := service.listingOfferKeyboard(11, 0, true)
 
-	if keyboard == nil || len(keyboard.InlineKeyboard) != 1 {
-		t.Fatalf("expected one keyboard row, got %#v", keyboard)
+	if keyboard == nil || len(keyboard.InlineKeyboard) != 2 {
+		t.Fatalf("expected two keyboard rows, got %#v", keyboard)
 	}
 
 	firstRow := keyboard.InlineKeyboard[0]
@@ -24,6 +24,11 @@ func TestListingOfferKeyboardHidesGetCouponForSoldOutListing(t *testing.T) {
 	}
 	if firstRow[0].CallbackData == nil || *firstRow[0].CallbackData != "another_deal:11" {
 		t.Fatalf("expected another-deal callback, got %#v", firstRow[0].CallbackData)
+	}
+
+	secondRow := keyboard.InlineKeyboard[1]
+	if len(secondRow) != 1 || secondRow[0].CallbackData == nil || *secondRow[0].CallbackData != "view_details:11" {
+		t.Fatalf("expected details button row, got %#v", secondRow)
 	}
 }
 
@@ -108,7 +113,7 @@ func TestFormatFeaturedListingCaptionShowsPreviewStatusInDevelopment(t *testing.
 }
 
 func TestFormatPriceUsesShekelSuffix(t *testing.T) {
-	if got := formatPrice(5950); stripBidiControls(got) != "59.50 ₪" {
+	if got := formatPrice(5950); stripBidiControls(got) != "59.5 ₪" {
 		t.Fatalf("expected shekel suffix price, got %q", got)
 	}
 	if got := formatPrice(5900); stripBidiControls(got) != "59.0 ₪" {
@@ -146,6 +151,33 @@ func TestNormalizeTelegramTextRemovesInvalidUTF8(t *testing.T) {
 	}
 	if got != "ab" {
 		t.Fatalf("expected invalid byte to be removed, got %q", got)
+	}
+}
+
+func TestFilterBrowsableListingsDevelopmentAllowsDraftActiveAndPreviewDiscounts(t *testing.T) {
+	filtered := filterBrowsableListings([]store.Listing{
+		{ID: 1, Status: "draft", CouponValueAmount: 10000, SalePriceAmount: 6000},
+		{ID: 2, Status: "active", CouponValueAmount: 12000, SalePriceAmount: 7000},
+		{ID: 3, Status: "preview", CouponValueAmount: 9000, SalePriceAmount: 5000},
+		{ID: 4, Status: "sold_out", CouponValueAmount: 10000, SalePriceAmount: 6000},
+		{ID: 5, Status: "active", CouponValueAmount: 10000, SalePriceAmount: 10000},
+	}, true)
+
+	if len(filtered) != 3 || filtered[0].ID != 1 || filtered[1].ID != 2 || filtered[2].ID != 3 {
+		t.Fatalf("expected discounted draft/active/preview listings only, got %#v", filtered)
+	}
+}
+
+func TestFilterBrowsableListingsProductionAllowsOnlyActiveDiscounts(t *testing.T) {
+	filtered := filterBrowsableListings([]store.Listing{
+		{ID: 1, Status: "draft", CouponValueAmount: 10000, SalePriceAmount: 6000},
+		{ID: 2, Status: "active", CouponValueAmount: 12000, SalePriceAmount: 7000},
+		{ID: 3, Status: "preview", CouponValueAmount: 9000, SalePriceAmount: 5000},
+		{ID: 4, Status: "active", CouponValueAmount: 10000, SalePriceAmount: 10000},
+	}, false)
+
+	if len(filtered) != 1 || filtered[0].ID != 2 {
+		t.Fatalf("expected only active discounted listings in production, got %#v", filtered)
 	}
 }
 

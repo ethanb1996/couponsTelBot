@@ -127,7 +127,7 @@ func (h *Handler) basePageData(title, path string, r *http.Request) pageData {
 		SourceTypes:       []string{"merchant_partner", "reseller", "licensed_distributor", "manual_source"},
 		RightsStatuses:    []string{"unknown", "review_pending", "approved", "restricted", "rejected"},
 		RiskRatings:       []string{"low", "medium", "high"},
-		ListingStatuses:   []string{"draft", "active", "paused", "sold_out", "expired", "removed"},
+		ListingStatuses:   []string{"preview", "draft", "active", "paused", "sold_out", "expired", "removed"},
 		CouponStatuses:    []string{"available", "reserved", "assigned", "delivered", "expired", "voided", "disputed"},
 		OrderStatuses:     []string{"draft", "pending_payment", "paid", "delivery_pending", "delivered", "failed", "cancelled", "disputed"},
 		SupportStatuses:   []string{"open", "in_progress", "waiting_on_user", "resolved", "closed"},

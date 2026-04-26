@@ -108,6 +108,27 @@ To import external catalog listings from a HAR export and download their primary
 go run ./apps/api/cmd/import_catalog -input data/GetCategoryById_6982.txt -photos-dir data/photos
 ```
 
+If you want the importer to compute a resale price from the source cost while covering PayPal fees, pass the fee inputs:
+
+```powershell
+go run ./apps/api/cmd/import_catalog `
+  -input data/GetCategoryById_6982.txt `
+  -photos-dir data/photos `
+  -paypal-fee-rate 0.0349 `
+  -paypal-fixed-fee 0.49
+```
+
+The importer uses this formula:
+
+- `profit = (coupon_value_amount - sale_price_amount) / 2`
+- `sale_price_amount - source_cost_amount - paypal_fee = profit`
+
+That resolves to:
+
+- `sale_price_amount = (coupon_value_amount + 2*source_cost_amount + 2*paypal_fixed_fee) / (3 - 2*paypal_fee_rate)`
+
+If the computed sale price is greater than or equal to `coupon_value_amount`, the importer skips that listing and removes any matching previously imported listing from sale.
+
 Use `-dry-run` to validate the HAR and see how many sources/listings would be imported without touching the database or downloading files.
 
 ## Optional Database Settings

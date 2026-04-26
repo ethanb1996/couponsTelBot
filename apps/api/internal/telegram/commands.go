@@ -375,7 +375,7 @@ func truncate(s string, maxLen int) string {
 }
 
 func (s *BotService) listingOfferKeyboard(listingID int64, availableInventoryCount int64, allowAnotherDeal bool) *tgbotapi.InlineKeyboardMarkup {
-	rows := make([][]tgbotapi.InlineKeyboardButton, 0, 1)
+	rows := make([][]tgbotapi.InlineKeyboardButton, 0, 2)
 	firstRow := make([]tgbotapi.InlineKeyboardButton, 0, 2)
 
 	if availableInventoryCount > 0 {
@@ -389,6 +389,9 @@ func (s *BotService) listingOfferKeyboard(listingID int64, availableInventoryCou
 	}
 
 	rows = append(rows, firstRow)
+	rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+		tgbotapi.NewInlineKeyboardButtonData("\u05e4\u05e8\u05d8\u05d9\u05dd \u05de\u05dc\u05d0\u05d9\u05dd", formatCallbackData(CallbackViewDetails, listingID)),
+	))
 	return &tgbotapi.InlineKeyboardMarkup{InlineKeyboard: rows}
 }
 
@@ -532,7 +535,11 @@ func (s *BotService) formatListingPhotoCaption(listing *store.Listing) string {
 
 func (s *BotService) loadStartListings(ctx context.Context) ([]store.Listing, error) {
 	if !s.isDevelopmentMode() {
-		return s.store.ListActiveListings(ctx)
+		listings, err := s.store.ListActiveListings(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return filterBrowsableListings(listings, false), nil
 	}
 
 	summaries, err := s.store.ListListingsForAdmin(ctx)
@@ -542,13 +549,10 @@ func (s *BotService) loadStartListings(ctx context.Context) ([]store.Listing, er
 
 	listings := make([]store.Listing, 0, len(summaries))
 	for _, summary := range summaries {
-		if strings.EqualFold(summary.Status, "removed") {
-			continue
-		}
 		listings = append(listings, summary.Listing)
 	}
 
-	return listings, nil
+	return filterBrowsableListings(listings, true), nil
 }
 
 func (s *BotService) isDevelopmentMode() bool {
@@ -585,4 +589,24 @@ func localListingPhotoPath(photoKey string) (string, bool) {
 	}
 
 	return path, true
+}
+
+func filterBrowsableListings(listings []store.Listing, isDevelopment bool) []store.Listing {
+	filtered := make([]store.Listing, 0, len(listings))
+	for _, listing := range listings {
+		if listing.CouponValueAmount <= listing.SalePriceAmount {
+			continue
+		}
+		if isDevelopment {
+			if !strings.EqualFold(listing.Status, "draft") &&
+				!strings.EqualFold(listing.Status, "active") &&
+				!strings.EqualFold(listing.Status, "preview") {
+				continue
+			}
+		} else if !strings.EqualFold(listing.Status, "active") {
+			continue
+		}
+		filtered = append(filtered, listing)
+	}
+	return filtered
 }

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -26,6 +27,8 @@ func run() error {
 	inputPath := flag.String("input", filepath.Clean("data/GetCategoryById_6982.txt"), "path to HAR export file")
 	photosDir := flag.String("photos-dir", filepath.Clean("data/photos"), "directory for downloaded product photos")
 	dryRun := flag.Bool("dry-run", false, "parse the HAR and report counts without downloading or writing to the database")
+	payPalFeeRate := flag.Float64("paypal-fee-rate", 0, "PayPal percentage fee as a decimal rate, for example 0.0349 for 3.49%")
+	payPalFixedFee := flag.Float64("paypal-fixed-fee", 0, "PayPal fixed fee in ILS major units, for example 0.49")
 	flag.Parse()
 
 	workingDir, err := os.Getwd()
@@ -67,26 +70,41 @@ func run() error {
 	defer db.Close()
 
 	summary, err := catalogimport.Run(ctx, db, catalogimport.Options{
-		InputPath: *inputPath,
-		PhotosDir: *photosDir,
-		DryRun:    *dryRun,
+		InputPath:            *inputPath,
+		PhotosDir:            *photosDir,
+		DryRun:               *dryRun,
+		PayPalPercentFeeRate: *payPalFeeRate,
+		PayPalFixedFeeAmount: majorUnitsToMinor(*payPalFixedFee),
 	})
 	if err != nil {
 		return err
 	}
 
 	if *dryRun {
-		fmt.Printf("dry-run ok: %d sources, %d listings\n", summary.SourceCount, summary.ListingCount)
+		fmt.Printf(
+			"dry-run ok: %d sources, %d listings, %d preview, %d skipped\n",
+			summary.SourceCount,
+			summary.ListingCount,
+			summary.PreviewListingCount,
+			summary.SkippedListingCount,
+		)
 		return nil
 	}
 
 	fmt.Printf(
-		"imported %d listings across %d sources (%d created, %d updated, %d photos downloaded)\n",
+		"imported %d listings across %d sources (%d created, %d updated, %d preview, %d skipped, %d removed, %d photos downloaded)\n",
 		summary.ListingCount,
 		summary.SourceCount,
 		summary.CreatedListingCount,
 		summary.UpdatedListingCount,
+		summary.PreviewListingCount,
+		summary.SkippedListingCount,
+		summary.RemovedListingCount,
 		summary.DownloadedPhotoCount,
 	)
 	return nil
+}
+
+func majorUnitsToMinor(value float64) int64 {
+	return int64(math.Round(value * 100))
 }
