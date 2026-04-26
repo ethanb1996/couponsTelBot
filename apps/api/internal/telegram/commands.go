@@ -239,6 +239,9 @@ func (s *BotService) handleConfirmBuy(ctx context.Context, callback *tgbotapi.Ca
 		if err == store.ErrListingSoldOut {
 			msg = "This coupon is sold out. Please choose another."
 		}
+		if err == store.ErrListingInactive {
+			msg = "This listing is still in preview. Publish it in admin before testing checkout."
+		}
 		return s.sendMessage(ctx, callback.Message.Chat.ID, msg)
 	}
 
@@ -307,7 +310,20 @@ func (s *BotService) formatListingDetails(listing *store.Listing) string {
 
 	availabilityText := fmt.Sprintf("%d", listing.AvailableInventoryCount)
 	purchaseNotice := "Tap Continue to Payment to reserve this coupon for checkout."
-	if listing.AvailableInventoryCount == 0 {
+	if !strings.EqualFold(listing.Status, "active") {
+		if s.isDevelopmentMode() {
+			if listing.AvailableInventoryCount == 0 {
+				availabilityText = "Preview only"
+				purchaseNotice = "This catalog item is visible in development preview mode. Publish the listing and add coupon inventory before it can be purchased."
+			} else {
+				availabilityText = fmt.Sprintf("%d (unpublished)", listing.AvailableInventoryCount)
+				purchaseNotice = "This listing has inventory but is not published yet. Publish it in admin before testing checkout."
+			}
+		} else {
+			availabilityText = "Unavailable"
+			purchaseNotice = "This coupon is not currently available for purchase."
+		}
+	} else if listing.AvailableInventoryCount == 0 {
 		if s.isDevelopmentMode() {
 			availabilityText = "Preview only"
 			purchaseNotice = "This catalog item is visible in development preview mode. Add coupon inventory before it can be purchased."
@@ -374,11 +390,11 @@ func truncate(s string, maxLen int) string {
 	return string(runes[:maxLen]) + "..."
 }
 
-func (s *BotService) listingOfferKeyboard(listingID int64, availableInventoryCount int64, allowAnotherDeal bool) *tgbotapi.InlineKeyboardMarkup {
+func (s *BotService) listingOfferKeyboard(listingID int64, listingStatus string, availableInventoryCount int64, allowAnotherDeal bool) *tgbotapi.InlineKeyboardMarkup {
 	rows := make([][]tgbotapi.InlineKeyboardButton, 0, 2)
 	firstRow := make([]tgbotapi.InlineKeyboardButton, 0, 2)
 
-	if availableInventoryCount > 0 {
+	if canStartCheckout(listingStatus, availableInventoryCount) {
 		firstRow = append(firstRow, tgbotapi.NewInlineKeyboardButtonData("\U0001F449 \u05e7\u05d1\u05dc \u05e7\u05d5\u05e4\u05d5\u05df", formatCallbackData(CallbackBuyListing, listingID)))
 	}
 	if allowAnotherDeal {
@@ -396,19 +412,7 @@ func (s *BotService) listingOfferKeyboard(listingID int64, availableInventoryCou
 }
 
 func (s *BotService) listingDetailKeyboard(listingID int64, availableInventoryCount int64) *tgbotapi.InlineKeyboardMarkup {
-	rows := make([][]tgbotapi.InlineKeyboardButton, 0, 2)
-	firstRow := make([]tgbotapi.InlineKeyboardButton, 0, 2)
-
-	if availableInventoryCount > 0 {
-		firstRow = append(firstRow, tgbotapi.NewInlineKeyboardButtonData("\U0001F449 \u05d4\u05de\u05e9\u05da \u05dc\u05ea\u05e9\u05dc\u05d5\u05dd", formatCallbackData(CallbackConfirmBuy, listingID)))
-	}
-	firstRow = append(firstRow, tgbotapi.NewInlineKeyboardButtonData("\U0001F449 \u05d3\u05d9\u05dc \u05d0\u05d7\u05e8", formatCallbackData(CallbackAnotherDeal, listingID)))
-	rows = append(rows, firstRow)
-	rows = append(rows, []tgbotapi.InlineKeyboardButton{
-		tgbotapi.NewInlineKeyboardButtonData("\u05ea\u05de\u05d9\u05db\u05d4", formatCallbackData(CallbackContactSupport, listingID)),
-	})
-
-	return &tgbotapi.InlineKeyboardMarkup{InlineKeyboard: rows}
+	return s.listingDetailKeyboardWithStatus(listingID, "active", availableInventoryCount)
 }
 
 func formatHoldDuration(value time.Duration) string {
@@ -461,7 +465,7 @@ func (s *BotService) sendFeaturedListing(ctx context.Context, chatID int64, list
 
 	listing := listings[index]
 	caption := normalizeTelegramText(s.formatFeaturedListingCaption(&listing))
-	keyboard := s.listingOfferKeyboard(listing.ID, listing.AvailableInventoryCount, len(listings) > 1)
+	keyboard := s.listingOfferKeyboard(listing.ID, listing.Status, listing.AvailableInventoryCount, len(listings) > 1)
 
 	if photoPath, ok := localListingPhotoPath(listing.PhotoKey); ok {
 		msg := tgbotapi.NewPhoto(chatID, tgbotapi.FilePath(photoPath))
@@ -491,7 +495,7 @@ func (s *BotService) sendListingDetails(ctx context.Context, chatID int64, listi
 
 	msg := tgbotapi.NewMessage(chatID, normalizeTelegramText(s.formatListingDetails(&listing)))
 	msg.ParseMode = tgbotapi.ModeHTML
-	msg.ReplyMarkup = s.listingDetailKeyboard(listing.ID, listing.AvailableInventoryCount)
+	msg.ReplyMarkup = s.listingDetailKeyboardWithStatus(listing.ID, listing.Status, listing.AvailableInventoryCount)
 
 	_, err := s.botAPI.Send(msg)
 	if err != nil {
@@ -589,6 +593,26 @@ func localListingPhotoPath(photoKey string) (string, bool) {
 	}
 
 	return path, true
+}
+
+func (s *BotService) listingDetailKeyboardWithStatus(listingID int64, listingStatus string, availableInventoryCount int64) *tgbotapi.InlineKeyboardMarkup {
+	rows := make([][]tgbotapi.InlineKeyboardButton, 0, 2)
+	firstRow := make([]tgbotapi.InlineKeyboardButton, 0, 2)
+
+	if canStartCheckout(listingStatus, availableInventoryCount) {
+		firstRow = append(firstRow, tgbotapi.NewInlineKeyboardButtonData("\U0001F449 \u05d4\u05de\u05e9\u05da \u05dc\u05ea\u05e9\u05dc\u05d5\u05dd", formatCallbackData(CallbackConfirmBuy, listingID)))
+	}
+	firstRow = append(firstRow, tgbotapi.NewInlineKeyboardButtonData("\U0001F449 \u05d3\u05d9\u05dc \u05d0\u05d7\u05e8", formatCallbackData(CallbackAnotherDeal, listingID)))
+	rows = append(rows, firstRow)
+	rows = append(rows, []tgbotapi.InlineKeyboardButton{
+		tgbotapi.NewInlineKeyboardButtonData("\u05ea\u05de\u05d9\u05db\u05d4", formatCallbackData(CallbackContactSupport, listingID)),
+	})
+
+	return &tgbotapi.InlineKeyboardMarkup{InlineKeyboard: rows}
+}
+
+func canStartCheckout(listingStatus string, availableInventoryCount int64) bool {
+	return strings.EqualFold(strings.TrimSpace(listingStatus), "active") && availableInventoryCount > 0
 }
 
 func filterBrowsableListings(listings []store.Listing, isDevelopment bool) []store.Listing {

@@ -12,7 +12,7 @@ import (
 
 func TestListingOfferKeyboardHidesGetCouponForSoldOutListing(t *testing.T) {
 	service := &BotService{}
-	keyboard := service.listingOfferKeyboard(11, 0, true)
+	keyboard := service.listingOfferKeyboard(11, "active", 0, true)
 
 	if keyboard == nil || len(keyboard.InlineKeyboard) != 2 {
 		t.Fatalf("expected two keyboard rows, got %#v", keyboard)
@@ -34,7 +34,7 @@ func TestListingOfferKeyboardHidesGetCouponForSoldOutListing(t *testing.T) {
 
 func TestListingDetailKeyboardHidesContinueToPaymentWhenSoldOut(t *testing.T) {
 	service := &BotService{}
-	keyboard := service.listingDetailKeyboard(12, 0)
+	keyboard := service.listingDetailKeyboardWithStatus(12, "active", 0)
 
 	if keyboard == nil || len(keyboard.InlineKeyboard) < 2 {
 		t.Fatalf("expected keyboard rows, got %#v", keyboard)
@@ -49,10 +49,28 @@ func TestListingDetailKeyboardHidesContinueToPaymentWhenSoldOut(t *testing.T) {
 	}
 }
 
+func TestListingOfferKeyboardHidesGetCouponForUnpublishedListingWithInventory(t *testing.T) {
+	service := &BotService{}
+	keyboard := service.listingOfferKeyboard(13, "draft", 2, true)
+
+	if keyboard == nil || len(keyboard.InlineKeyboard) != 2 {
+		t.Fatalf("expected two keyboard rows, got %#v", keyboard)
+	}
+
+	firstRow := keyboard.InlineKeyboard[0]
+	if len(firstRow) != 1 {
+		t.Fatalf("expected one button for unpublished listing, got %#v", firstRow)
+	}
+	if firstRow[0].CallbackData == nil || *firstRow[0].CallbackData != "another_deal:13" {
+		t.Fatalf("expected another-deal callback, got %#v", firstRow[0].CallbackData)
+	}
+}
+
 func TestFormatListingDetailsIncludesSoldOutNotice(t *testing.T) {
 	service := &BotService{}
 	text := service.formatListingDetails(&store.Listing{
 		MerchantName:            "Cafe",
+		Status:                  "active",
 		Title:                   "Breakfast coupon",
 		Description:             "Use for one meal.",
 		CouponValueAmount:       5000,
@@ -75,6 +93,7 @@ func TestFormatListingDetailsUsesPreviewNoticeInDevelopment(t *testing.T) {
 	}
 	text := service.formatListingDetails(&store.Listing{
 		MerchantName:            "Cafe",
+		Status:                  "active",
 		Title:                   "Breakfast coupon",
 		Description:             "Use for one meal.",
 		CouponValueAmount:       5000,
@@ -88,6 +107,30 @@ func TestFormatListingDetailsUsesPreviewNoticeInDevelopment(t *testing.T) {
 	}
 	if !strings.Contains(text, "visible in development preview mode") {
 		t.Fatalf("expected development preview notice, got %q", text)
+	}
+}
+
+func TestFormatListingDetailsUsesUnpublishedNoticeInDevelopment(t *testing.T) {
+	service := &BotService{
+		config: &config.Config{AppEnv: "development"},
+	}
+	text := service.formatListingDetails(&store.Listing{
+		MerchantName:            "Cafe",
+		Status:                  "draft",
+		Title:                   "Breakfast coupon",
+		Description:             "Use for one meal.",
+		CouponValueAmount:       5000,
+		SalePriceAmount:         3500,
+		AvailableInventoryCount: 2,
+		RedemptionInstructions:  "Show the code to the cashier.",
+		FinalSaleDisclosureText: "All sales final.",
+	})
+
+	if !strings.Contains(text, "Quantity Available:</b> 2 (unpublished)") {
+		t.Fatalf("expected unpublished availability copy, got %q", text)
+	}
+	if !strings.Contains(text, "not published yet") {
+		t.Fatalf("expected unpublished development notice, got %q", text)
 	}
 }
 
