@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ethanb1996/couponsTelBot/apps/api/internal/config"
 	"github.com/ethanb1996/couponsTelBot/apps/api/internal/store"
 )
 
@@ -61,6 +62,42 @@ func TestFormatListingDetailsIncludesSoldOutNotice(t *testing.T) {
 	}
 	if !strings.Contains(text, "currently sold out") {
 		t.Fatalf("expected sold-out notice, got %q", text)
+	}
+}
+
+func TestFormatListingDetailsUsesPreviewNoticeInDevelopment(t *testing.T) {
+	service := &BotService{
+		config: &config.Config{AppEnv: "development"},
+	}
+	text := service.formatListingDetails(&store.Listing{
+		MerchantName:            "Cafe",
+		Title:                   "Breakfast coupon",
+		Description:             "Use for one meal.",
+		CouponValueAmount:       5000,
+		SalePriceAmount:         3500,
+		RedemptionInstructions:  "Show the code to the cashier.",
+		FinalSaleDisclosureText: "All sales final.",
+	})
+
+	if !strings.Contains(text, "Quantity Available:</b> Preview only") {
+		t.Fatalf("expected preview quantity copy, got %q", text)
+	}
+	if !strings.Contains(text, "visible in development preview mode") {
+		t.Fatalf("expected development preview notice, got %q", text)
+	}
+}
+
+func TestFormatListingsForDisplayShowsPreviewStatusInDevelopment(t *testing.T) {
+	service := &BotService{
+		config: &config.Config{AppEnv: "development"},
+	}
+
+	text := service.formatListingsForDisplay([]store.Listing{
+		{MerchantName: "Cafe", Title: "Breakfast coupon", SalePriceAmount: 3500, AvailableInventoryCount: 0},
+	})
+
+	if !strings.Contains(text, "Status: Preview only") {
+		t.Fatalf("expected preview status in development listing summary, got %q", text)
 	}
 }
 

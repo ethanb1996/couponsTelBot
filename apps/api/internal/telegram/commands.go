@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/ethanb1996/couponsTelBot/apps/api/internal/config"
@@ -79,9 +80,9 @@ func (s *BotService) handleStart(ctx context.Context, message *tgbotapi.Message)
 		return s.sendMessage(ctx, message.Chat.ID, "Something went wrong. Please try again.")
 	}
 
-	listings, err := s.store.ListActiveListings(ctx)
+	listings, err := s.loadStartListings(ctx)
 	if err != nil {
-		s.logger.Error("failed to fetch active listings", "error", err)
+		s.logger.Error("failed to fetch start listings", "error", err)
 		return s.sendMessage(ctx, message.Chat.ID, "Unable to load coupons. Please try again later.")
 	}
 
@@ -113,7 +114,13 @@ func (s *BotService) handleStart(ctx context.Context, message *tgbotapi.Message)
 func (s *BotService) handleHelp(ctx context.Context, message *tgbotapi.Message) error {
 	helpText := `<b>How to use CouponTelBot:</b>
 
-/start - See available coupons
+/start - See available coupons`
+	if s.isDevelopmentMode() {
+		helpText += `
+(development also shows preview catalog items without inventory)`
+	}
+
+	helpText += `
 /help - Show this message
 
 <b>How to buy:</b>
@@ -299,15 +306,25 @@ func (s *BotService) formatListingsForDisplay(listings []store.Listing) string {
 			expiryText = listing.NextCouponExpiryAt.Format("Jan 2")
 		}
 
+		statusText := ""
+		if listing.AvailableInventoryCount == 0 {
+			if s.isDevelopmentMode() {
+				statusText = "\nStatus: Preview only"
+			} else {
+				statusText = "\nStatus: Sold out"
+			}
+		}
+
 		text += fmt.Sprintf(`<b>#%d %s</b>
 Coupon: %s
 Price: %s
-Expires: %s
+Expires: %s%s
 
 `, i+1, listing.MerchantName,
 			truncate(listing.Title, 30),
 			priceILS,
-			expiryText)
+			expiryText,
+			statusText)
 	}
 	return text
 }
@@ -324,8 +341,13 @@ func (s *BotService) formatListingDetails(listing *store.Listing) string {
 	availabilityText := fmt.Sprintf("%d", listing.AvailableInventoryCount)
 	purchaseNotice := "Tap Buy Now to reserve this coupon for checkout."
 	if listing.AvailableInventoryCount == 0 {
-		availabilityText = "Sold out"
-		purchaseNotice = "This coupon is currently sold out. You can still review the details or contact support."
+		if s.isDevelopmentMode() {
+			availabilityText = "Preview only"
+			purchaseNotice = "This catalog item is visible in development preview mode. Add coupon inventory before it can be purchased."
+		} else {
+			availabilityText = "Sold out"
+			purchaseNotice = "This coupon is currently sold out. You can still review the details or contact support."
+		}
 	}
 
 	text := fmt.Sprintf(`<b>%s - %s</b>
@@ -459,6 +481,31 @@ func (s *BotService) sendMessage(ctx context.Context, chatID int64, text string)
 	msg.ParseMode = tgbotapi.ModeHTML
 	_, err := s.botAPI.Send(msg)
 	return err
+}
+
+func (s *BotService) loadStartListings(ctx context.Context) ([]store.Listing, error) {
+	if !s.isDevelopmentMode() {
+		return s.store.ListActiveListings(ctx)
+	}
+
+	summaries, err := s.store.ListListingsForAdmin(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	listings := make([]store.Listing, 0, len(summaries))
+	for _, summary := range summaries {
+		if strings.EqualFold(summary.Status, "removed") {
+			continue
+		}
+		listings = append(listings, summary.Listing)
+	}
+
+	return listings, nil
+}
+
+func (s *BotService) isDevelopmentMode() bool {
+	return s != nil && s.config != nil && strings.EqualFold(strings.TrimSpace(s.config.AppEnv), "development")
 }
 
 func (s *BotService) SendHTMLMessage(ctx context.Context, telegramUserID int64, text string) (int64, error) {
