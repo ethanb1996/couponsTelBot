@@ -232,6 +232,10 @@ func defaultString(value string, fallback string) string {
 	return value
 }
 
+func listingEffectivePriceAmount(listing store.Listing) int64 {
+	return store.EffectiveListingPriceAmount(listing)
+}
+
 func firstValue(values []string) string {
 	if len(values) == 0 {
 		return ""

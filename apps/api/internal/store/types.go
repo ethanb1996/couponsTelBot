@@ -35,6 +35,7 @@ type Listing struct {
 	Description             string
 	CouponValueAmount       int64
 	SalePriceAmount         int64
+	ResellPriceAmount       int64
 	CurrencyCode            string
 	ExpirySummary           string
 	TermsSummary            string
@@ -214,6 +215,7 @@ type CreateListingParams struct {
 	Description             string
 	CouponValueAmount       int64
 	SalePriceAmount         int64
+	ResellPriceAmount       int64
 	CurrencyCode            string
 	ExpirySummary           string
 	TermsSummary            string

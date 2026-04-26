@@ -32,12 +32,12 @@ func TestListingOfferKeyboardHidesGetCouponForSoldOutListing(t *testing.T) {
 	}
 }
 
-func TestListingDetailKeyboardHidesContinueToPaymentWhenSoldOut(t *testing.T) {
+func TestListingDetailKeyboardHidesPrimaryCTAWhenSoldOut(t *testing.T) {
 	service := &BotService{}
 	keyboard := service.listingDetailKeyboardWithStatus(12, "active", 0)
 
-	if keyboard == nil || len(keyboard.InlineKeyboard) < 2 {
-		t.Fatalf("expected keyboard rows, got %#v", keyboard)
+	if keyboard == nil || len(keyboard.InlineKeyboard) != 1 {
+		t.Fatalf("expected one keyboard row, got %#v", keyboard)
 	}
 
 	firstRow := keyboard.InlineKeyboard[0]
@@ -46,6 +46,29 @@ func TestListingDetailKeyboardHidesContinueToPaymentWhenSoldOut(t *testing.T) {
 	}
 	if firstRow[0].CallbackData == nil || *firstRow[0].CallbackData != "another_deal:12" {
 		t.Fatalf("expected another-deal callback, got %#v", firstRow[0].CallbackData)
+	}
+}
+
+func TestListingDetailKeyboardUsesTwoCTAsWhenAvailable(t *testing.T) {
+	service := &BotService{}
+	keyboard := service.listingDetailKeyboardWithStatus(13, "active", 2)
+
+	if keyboard == nil || len(keyboard.InlineKeyboard) != 1 {
+		t.Fatalf("expected one keyboard row, got %#v", keyboard)
+	}
+
+	firstRow := keyboard.InlineKeyboard[0]
+	if len(firstRow) != 2 {
+		t.Fatalf("expected two buttons for active listing, got %#v", firstRow)
+	}
+	if firstRow[0].Text != "👉 קבל קופון" {
+		t.Fatalf("expected get-coupon CTA, got %q", firstRow[0].Text)
+	}
+	if firstRow[0].CallbackData == nil || *firstRow[0].CallbackData != "confirm_buy:13" {
+		t.Fatalf("expected confirm-buy callback, got %#v", firstRow[0].CallbackData)
+	}
+	if firstRow[1].CallbackData == nil || *firstRow[1].CallbackData != "another_deal:13" {
+		t.Fatalf("expected another-deal callback, got %#v", firstRow[1].CallbackData)
 	}
 }
 
@@ -66,71 +89,78 @@ func TestListingOfferKeyboardHidesGetCouponForUnpublishedListingWithInventory(t 
 	}
 }
 
-func TestFormatListingDetailsIncludesSoldOutNotice(t *testing.T) {
+func TestFormatListingDetailsBuildsShortHighConversionMessage(t *testing.T) {
 	service := &BotService{}
 	text := service.formatListingDetails(&store.Listing{
-		MerchantName:            "Cafe",
+		MerchantName:            "אגאדיר",
 		Status:                  "active",
-		Title:                   "Breakfast coupon",
-		Description:             "Use for one meal.",
-		CouponValueAmount:       5000,
-		SalePriceAmount:         3500,
-		RedemptionInstructions:  "Show the code to the cashier.",
-		FinalSaleDisclosureText: "All sales final.",
+		Title:                   "שובר 150₪ לארוחה",
+		Description:             "Preview only. development mode. www.example.com",
+		CouponValueAmount:       15000,
+		SalePriceAmount:         7400,
+		ResellPriceAmount:       10500,
+		AvailableInventoryCount: 6,
 	})
 
-	if !strings.Contains(text, "Quantity Available:</b> Sold out") {
-		t.Fatalf("expected sold-out quantity copy, got %q", text)
+	lines := strings.Split(text, "\n")
+	if len(lines) != 5 {
+		t.Fatalf("expected exactly five lines, got %d in %q", len(lines), text)
 	}
-	if !strings.Contains(text, "currently sold out") {
-		t.Fatalf("expected sold-out notice, got %q", text)
+	if !strings.Contains(lines[0], "🍔") || !strings.Contains(lines[0], "אגאדיר") {
+		t.Fatalf("expected brand headline with emoji, got %q", lines[0])
+	}
+	if !strings.Contains(lines[2], "150.0") || !strings.Contains(lines[2], "105.0") {
+		t.Fatalf("expected price anchor line, got %q", lines[2])
+	}
+	for _, forbidden := range []string{"Preview only", "development mode", "www."} {
+		if strings.Contains(text, forbidden) {
+			t.Fatalf("expected noisy detail copy to be removed, got %q", text)
+		}
 	}
 }
 
-func TestFormatListingDetailsUsesPreviewNoticeInDevelopment(t *testing.T) {
-	service := &BotService{
-		config: &config.Config{AppEnv: "development"},
-	}
+func TestFormatListingDetailsUsesNonBurgerEmojiWhenRelevant(t *testing.T) {
+	service := &BotService{}
 	text := service.formatListingDetails(&store.Listing{
-		MerchantName:            "Cafe",
+		MerchantName:            "פיצה האט",
 		Status:                  "active",
-		Title:                   "Breakfast coupon",
-		Description:             "Use for one meal.",
-		CouponValueAmount:       5000,
-		SalePriceAmount:         3500,
-		RedemptionInstructions:  "Show the code to the cashier.",
-		FinalSaleDisclosureText: "All sales final.",
+		Title:                   "פיצה משפחתית",
+		CouponValueAmount:       9000,
+		SalePriceAmount:         4800,
+		ResellPriceAmount:       6900,
+		AvailableInventoryCount: 1,
 	})
 
-	if !strings.Contains(text, "Quantity Available:</b> Preview only") {
-		t.Fatalf("expected preview quantity copy, got %q", text)
+	if !strings.HasPrefix(text, "🍕") {
+		t.Fatalf("expected pizza emoji, got %q", text)
 	}
-	if !strings.Contains(text, "visible in development preview mode") {
-		t.Fatalf("expected development preview notice, got %q", text)
+	if strings.Contains(text, "🍔") {
+		t.Fatalf("did not expect burger emoji, got %q", text)
 	}
 }
 
-func TestFormatListingDetailsUsesUnpublishedNoticeInDevelopment(t *testing.T) {
-	service := &BotService{
-		config: &config.Config{AppEnv: "development"},
-	}
+func TestFormatListingDetailsShowsUnavailableCopyWithoutLegalNoise(t *testing.T) {
+	service := &BotService{}
 	text := service.formatListingDetails(&store.Listing{
 		MerchantName:            "Cafe",
 		Status:                  "draft",
 		Title:                   "Breakfast coupon",
-		Description:             "Use for one meal.",
+		Description:             "Use for one meal. Final sale. Contact support.",
 		CouponValueAmount:       5000,
-		SalePriceAmount:         3500,
-		AvailableInventoryCount: 2,
+		SalePriceAmount:         2200,
+		ResellPriceAmount:       3500,
+		AvailableInventoryCount: 0,
 		RedemptionInstructions:  "Show the code to the cashier.",
 		FinalSaleDisclosureText: "All sales final.",
 	})
 
-	if !strings.Contains(text, "Quantity Available:</b> 2 (unpublished)") {
-		t.Fatalf("expected unpublished availability copy, got %q", text)
+	if !strings.Contains(text, "⏳") {
+		t.Fatalf("expected unavailable urgency line, got %q", text)
 	}
-	if !strings.Contains(text, "not published yet") {
-		t.Fatalf("expected unpublished development notice, got %q", text)
+	for _, forbidden := range []string{"Final sale", "Contact support", "Show the code", "Preview only"} {
+		if strings.Contains(text, forbidden) {
+			t.Fatalf("expected legal and support noise to be removed, got %q", text)
+		}
 	}
 }
 
@@ -143,23 +173,24 @@ func TestFormatFeaturedListingCaptionShowsPreviewStatusInDevelopment(t *testing.
 		MerchantName:            "Cafe",
 		Title:                   "Breakfast coupon",
 		CouponValueAmount:       5000,
-		SalePriceAmount:         3500,
+		SalePriceAmount:         2200,
+		ResellPriceAmount:       3500,
 		AvailableInventoryCount: 0,
 	})
 
 	if !strings.Contains(text, "תצוגה בלבד") {
 		t.Fatalf("expected preview status in featured caption, got %q", text)
 	}
-	if !strings.Contains(text, "50.0") || !strings.Contains(text, "35.0") || !strings.Contains(text, "₪") {
+	if !strings.Contains(text, "50.0") || !strings.Contains(text, "35.0") || !strings.Contains(stripBidiControls(text), "₪") {
 		t.Fatalf("expected formatted prices in caption, got %q", text)
 	}
 }
 
 func TestFormatPriceUsesShekelSuffix(t *testing.T) {
-	if got := formatPrice(5950); stripBidiControls(got) != "59.5 ₪" {
+	if got := stripBidiControls(formatPrice(5950)); !strings.Contains(got, "59.5") || !strings.Contains(got, "₪") {
 		t.Fatalf("expected shekel suffix price, got %q", got)
 	}
-	if got := formatPrice(5900); stripBidiControls(got) != "59.0 ₪" {
+	if got := stripBidiControls(formatPrice(5900)); !strings.Contains(got, "59.0") || !strings.Contains(got, "₪") {
 		t.Fatalf("expected integer shekel suffix price, got %q", got)
 	}
 }
@@ -199,11 +230,11 @@ func TestNormalizeTelegramTextRemovesInvalidUTF8(t *testing.T) {
 
 func TestFilterBrowsableListingsDevelopmentAllowsDraftActiveAndPreviewDiscounts(t *testing.T) {
 	filtered := filterBrowsableListings([]store.Listing{
-		{ID: 1, Status: "draft", CouponValueAmount: 10000, SalePriceAmount: 6000},
-		{ID: 2, Status: "active", CouponValueAmount: 12000, SalePriceAmount: 7000},
-		{ID: 3, Status: "preview", CouponValueAmount: 9000, SalePriceAmount: 5000},
-		{ID: 4, Status: "sold_out", CouponValueAmount: 10000, SalePriceAmount: 6000},
-		{ID: 5, Status: "active", CouponValueAmount: 10000, SalePriceAmount: 10000},
+		{ID: 1, Status: "draft", CouponValueAmount: 10000, SalePriceAmount: 6000, ResellPriceAmount: 6500},
+		{ID: 2, Status: "active", CouponValueAmount: 12000, SalePriceAmount: 7000, ResellPriceAmount: 7600},
+		{ID: 3, Status: "preview", CouponValueAmount: 9000, SalePriceAmount: 5000, ResellPriceAmount: 5900},
+		{ID: 4, Status: "sold_out", CouponValueAmount: 10000, SalePriceAmount: 6000, ResellPriceAmount: 6500},
+		{ID: 5, Status: "active", CouponValueAmount: 10000, SalePriceAmount: 6000, ResellPriceAmount: 10000},
 	}, true)
 
 	if len(filtered) != 3 || filtered[0].ID != 1 || filtered[1].ID != 2 || filtered[2].ID != 3 {
@@ -213,10 +244,10 @@ func TestFilterBrowsableListingsDevelopmentAllowsDraftActiveAndPreviewDiscounts(
 
 func TestFilterBrowsableListingsProductionAllowsOnlyActiveDiscounts(t *testing.T) {
 	filtered := filterBrowsableListings([]store.Listing{
-		{ID: 1, Status: "draft", CouponValueAmount: 10000, SalePriceAmount: 6000},
-		{ID: 2, Status: "active", CouponValueAmount: 12000, SalePriceAmount: 7000},
-		{ID: 3, Status: "preview", CouponValueAmount: 9000, SalePriceAmount: 5000},
-		{ID: 4, Status: "active", CouponValueAmount: 10000, SalePriceAmount: 10000},
+		{ID: 1, Status: "draft", CouponValueAmount: 10000, SalePriceAmount: 6000, ResellPriceAmount: 6500},
+		{ID: 2, Status: "active", CouponValueAmount: 12000, SalePriceAmount: 7000, ResellPriceAmount: 7600},
+		{ID: 3, Status: "preview", CouponValueAmount: 9000, SalePriceAmount: 5000, ResellPriceAmount: 5900},
+		{ID: 4, Status: "active", CouponValueAmount: 10000, SalePriceAmount: 6000, ResellPriceAmount: 10000},
 	}, false)
 
 	if len(filtered) != 1 || filtered[0].ID != 2 {

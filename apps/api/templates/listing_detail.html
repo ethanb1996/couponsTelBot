@@ -56,7 +56,8 @@
           <div class="field"><label>Title</label><input name="title" value="{{.Listing.Title}}" required></div>
           <div class="field"><label>Description</label><textarea name="description">{{.Listing.Description}}</textarea></div>
           <div class="field"><label>Coupon Value Amount</label><input name="coupon_value_amount" type="number" min="0" value="{{.Listing.CouponValueAmount}}" required></div>
-          <div class="field"><label>Sale Price Amount</label><input name="sale_price_amount" type="number" min="0" value="{{.Listing.SalePriceAmount}}" required></div>
+          <div class="field"><label>Source Sale Price Amount</label><input name="sale_price_amount" type="number" min="0" value="{{.Listing.SalePriceAmount}}" required></div>
+          <div class="field"><label>Resell Price Amount</label><input name="resell_price_amount" type="number" min="0" value="{{.Listing.ResellPriceAmount}}" required></div>
           <div class="field"><label>Currency</label><input name="currency_code" value="{{.Listing.CurrencyCode}}"></div>
           <div class="field"><label>Expiry Summary</label><input name="expiry_summary" value="{{.Listing.ExpirySummary}}"></div>
           <div class="field"><label>Terms Summary</label><textarea name="terms_summary">{{.Listing.TermsSummary}}</textarea></div>

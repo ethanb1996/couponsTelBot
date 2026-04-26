@@ -73,6 +73,7 @@ type listingRecord struct {
 	Description            string
 	CouponValueAmount      int64
 	SalePriceAmount        int64
+	ResellPriceAmount      int64
 	CurrencyCode           string
 	ExpirySummary          string
 	TermsSummary           string
@@ -424,13 +425,13 @@ func expandCategory(category sourceCategory, detailCategory sourceCategory, deta
 		if valueFromVariant := inferCouponValueFromVariant(variant, sourceCostAmount); valueFromVariant > 0 {
 			couponValueAmount = valueFromVariant
 		}
-		salePriceAmount, ok := calculateResalePriceAmount(
+		resellPriceAmount, ok := calculateResalePriceAmount(
 			couponValueAmount,
 			sourceCostAmount,
 			options.PayPalPercentFeeRate,
 			options.PayPalFixedFeeAmount,
 		)
-		if !ok || salePriceAmount >= couponValueAmount {
+		if !ok || resellPriceAmount >= couponValueAmount {
 			rejectedImportKeys = append(rejectedImportKeys, importKey)
 			continue
 		}
@@ -448,7 +449,8 @@ func expandCategory(category sourceCategory, detailCategory sourceCategory, deta
 			Title:                  title,
 			Description:            description,
 			CouponValueAmount:      couponValueAmount,
-			SalePriceAmount:        salePriceAmount,
+			SalePriceAmount:        sourceCostAmount,
+			ResellPriceAmount:      resellPriceAmount,
 			CurrencyCode:           defaultCurrencyCode,
 			ExpirySummary:          expirySummary,
 			TermsSummary:           termsSummary,
@@ -663,6 +665,7 @@ func upsertListing(ctx context.Context, tx pgx.Tx, record listingRecord, sourceI
 				description,
 				coupon_value_amount,
 				sale_price_amount,
+				resell_price_amount,
 				currency_code,
 				expiry_summary,
 				terms_summary,
@@ -672,7 +675,7 @@ func upsertListing(ctx context.Context, tx pgx.Tx, record listingRecord, sourceI
 				external_import_key,
 				status,
 				created_by_admin_id
-			) VALUES ($2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $1, $13, $14)
+			) VALUES ($2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $1, $14, $15)
 			ON CONFLICT (external_import_key) WHERE external_import_key <> ''
 			DO UPDATE SET
 				merchant_name = EXCLUDED.merchant_name,
@@ -680,6 +683,7 @@ func upsertListing(ctx context.Context, tx pgx.Tx, record listingRecord, sourceI
 				description = EXCLUDED.description,
 				coupon_value_amount = EXCLUDED.coupon_value_amount,
 				sale_price_amount = EXCLUDED.sale_price_amount,
+				resell_price_amount = EXCLUDED.resell_price_amount,
 				currency_code = EXCLUDED.currency_code,
 				expiry_summary = EXCLUDED.expiry_summary,
 				terms_summary = EXCLUDED.terms_summary,
@@ -698,6 +702,7 @@ func upsertListing(ctx context.Context, tx pgx.Tx, record listingRecord, sourceI
 		record.Description,
 		record.CouponValueAmount,
 		record.SalePriceAmount,
+		record.ResellPriceAmount,
 		record.CurrencyCode,
 		record.ExpirySummary,
 		record.TermsSummary,

@@ -118,6 +118,11 @@ go run ./apps/api/cmd/import_catalog `
   -paypal-fixed-fee 0.49
 ```
 
+You can also set these in `.env` so the importer uses them by default:
+
+- `PAYPAL_FEE_PERCENT_RATE=0.0349`
+- `PAYPAL_FIXED_FEE_AMOUNT=0.49`
+
 The importer uses this formula:
 
 - `profit = (coupon_value_amount - sale_price_amount) / 2`
@@ -126,6 +131,8 @@ The importer uses this formula:
 That resolves to:
 
 - `sale_price_amount = (coupon_value_amount + 2*source_cost_amount + 2*paypal_fixed_fee) / (3 - 2*paypal_fee_rate)`
+
+The importer stores the original HAR supplier price in `sale_price_amount` and the computed customer-facing price in `resell_price_amount`.
 
 If the computed sale price is greater than or equal to `coupon_value_amount`, the importer skips that listing and removes any matching previously imported listing from sale.
 

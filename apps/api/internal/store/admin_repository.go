@@ -193,6 +193,7 @@ func (p *Postgres) GetListing(ctx context.Context, listingID int64) (Listing, er
 			description,
 			coupon_value_amount,
 			sale_price_amount,
+			resell_price_amount,
 			currency_code,
 			expiry_summary,
 			terms_summary,
@@ -244,6 +245,9 @@ func (p *Postgres) UpdateListing(ctx context.Context, listingID int64, params Cr
 	if strings.TrimSpace(params.FinalSaleDisclosureText) == "" {
 		return Listing{}, fmt.Errorf("%w: final sale disclosure text is required", ErrInvalidArgument)
 	}
+	if params.ResellPriceAmount <= 0 {
+		params.ResellPriceAmount = params.SalePriceAmount
+	}
 
 	row := p.Pool.QueryRow(ctx, `
 		UPDATE listings
@@ -253,12 +257,13 @@ func (p *Postgres) UpdateListing(ctx context.Context, listingID int64, params Cr
 			description = $4,
 			coupon_value_amount = $5,
 			sale_price_amount = $6,
-			currency_code = $7,
-			expiry_summary = $8,
-			terms_summary = $9,
-			redemption_instructions = $10,
-			final_sale_disclosure_text = $11,
-			created_by_admin_id = $12,
+			resell_price_amount = $7,
+			currency_code = $8,
+			expiry_summary = $9,
+			terms_summary = $10,
+			redemption_instructions = $11,
+			final_sale_disclosure_text = $12,
+			created_by_admin_id = $13,
 			updated_at = NOW()
 		WHERE id = $1
 		RETURNING
@@ -268,6 +273,7 @@ func (p *Postgres) UpdateListing(ctx context.Context, listingID int64, params Cr
 			description,
 			coupon_value_amount,
 			sale_price_amount,
+			resell_price_amount,
 			currency_code,
 			expiry_summary,
 			terms_summary,
@@ -287,6 +293,7 @@ func (p *Postgres) UpdateListing(ctx context.Context, listingID int64, params Cr
 		params.Description,
 		params.CouponValueAmount,
 		params.SalePriceAmount,
+		params.ResellPriceAmount,
 		defaultString(params.CurrencyCode, "ILS"),
 		params.ExpirySummary,
 		params.TermsSummary,
@@ -331,6 +338,7 @@ func (p *Postgres) UpdateListingStatus(ctx context.Context, listingID int64, sta
 			description,
 			coupon_value_amount,
 			sale_price_amount,
+			resell_price_amount,
 			currency_code,
 			expiry_summary,
 			terms_summary,
@@ -709,6 +717,7 @@ func listingInventorySummarySQL(whereClause string, suffix string) string {
 			l.description,
 			l.coupon_value_amount,
 			l.sale_price_amount,
+			l.resell_price_amount,
 			l.currency_code,
 			l.expiry_summary,
 			l.terms_summary,
@@ -823,6 +832,7 @@ func scanListingInventorySummary(row interface {
 		&summary.Description,
 		&summary.CouponValueAmount,
 		&summary.SalePriceAmount,
+		&summary.ResellPriceAmount,
 		&summary.CurrencyCode,
 		&summary.ExpirySummary,
 		&summary.TermsSummary,

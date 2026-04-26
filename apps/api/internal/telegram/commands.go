@@ -300,70 +300,23 @@ func (s *BotService) getOrCreateUser(ctx context.Context, from *tgbotapi.User) (
 }
 
 func (s *BotService) formatListingDetails(listing *store.Listing) string {
-	priceILS := formatPrice(listing.SalePriceAmount)
-	originalValue := formatPrice(listing.CouponValueAmount)
-
-	expiryText := "Unknown"
-	if listing.NextCouponExpiryAt != nil {
-		expiryText = listing.NextCouponExpiryAt.Format("2 January 2006")
+	brandName := strings.TrimSpace(listing.MerchantName)
+	if brandName == "" {
+		brandName = "הדיל שלך"
 	}
 
-	availabilityText := fmt.Sprintf("%d", listing.AvailableInventoryCount)
-	purchaseNotice := "Tap Continue to Payment to reserve this coupon for checkout."
-	if !strings.EqualFold(listing.Status, "active") {
-		if s.isDevelopmentMode() {
-			if listing.AvailableInventoryCount == 0 {
-				availabilityText = "Preview only"
-				purchaseNotice = "This catalog item is visible in development preview mode. Publish the listing and add coupon inventory before it can be purchased."
-			} else {
-				availabilityText = fmt.Sprintf("%d (unpublished)", listing.AvailableInventoryCount)
-				purchaseNotice = "This listing has inventory but is not published yet. Publish it in admin before testing checkout."
-			}
-		} else {
-			availabilityText = "Unavailable"
-			purchaseNotice = "This coupon is not currently available for purchase."
-		}
-	} else if listing.AvailableInventoryCount == 0 {
-		if s.isDevelopmentMode() {
-			availabilityText = "Preview only"
-			purchaseNotice = "This catalog item is visible in development preview mode. Add coupon inventory before it can be purchased."
-		} else {
-			availabilityText = "Sold out"
-			purchaseNotice = "This coupon is currently sold out. You can still review the details or contact support."
-		}
+	lines := []string{
+		fmt.Sprintf("%s <b>%s</b>", listingEmoji(listing), html.EscapeString(brandName)),
+		html.EscapeString(listingOfferLine(listing)),
+		fmt.Sprintf("במקום %s → <b>רק %s</b>", formatPrice(listing.CouponValueAmount), formatPrice(store.EffectiveListingPriceAmount(*listing))),
+		html.EscapeString(s.listingUrgencyLine(listing)),
 	}
 
-	return fmt.Sprintf(`<b>%s - %s</b>
+	if reassurance := listingReassuranceLine(listing); reassurance != "" {
+		lines = append(lines, html.EscapeString(reassurance))
+	}
 
-<b>What you get:</b>
-%s
-
-<b>Details:</b>
-- <b>Coupon Value:</b> %s
-- <b>Your Price:</b> %s
-- <b>Expires:</b> %s
-- <b>Quantity Available:</b> %s
-
-<b>How to redeem:</b>
-%s
-
-<b>Important:</b>
-%s
-
-%s
-
-All sales final. No refunds. Please read all terms before purchasing.`,
-		html.EscapeString(listing.MerchantName),
-		html.EscapeString(listing.Title),
-		html.EscapeString(listing.Description),
-		originalValue,
-		priceILS,
-		expiryText,
-		availabilityText,
-		html.EscapeString(listing.RedemptionInstructions),
-		html.EscapeString(listing.FinalSaleDisclosureText),
-		purchaseNotice,
-	)
+	return strings.Join(lines, "\n")
 }
 
 func formatPrice(cents int64) string {
@@ -388,6 +341,169 @@ func truncate(s string, maxLen int) string {
 		return s
 	}
 	return string(runes[:maxLen]) + "..."
+}
+
+func listingEmoji(listing *store.Listing) string {
+	text := strings.ToLower(strings.Join([]string{
+		listing.MerchantName,
+		listing.Title,
+		listing.Description,
+	}, " "))
+
+	for _, candidate := range []struct {
+		emoji    string
+		keywords []string
+	}{
+		{emoji: "🍔", keywords: []string{"burger", "hamburger", "אגאדיר", "בורגר", "המבורגר"}},
+		{emoji: "🍕", keywords: []string{"pizza", "פיצה"}},
+		{emoji: "🍣", keywords: []string{"sushi", "סושי", "poke", "פוקי", "ווק", "אסייתי", "ramen"}},
+		{emoji: "☕", keywords: []string{"coffee", "cafe", "קפה", "אספרסו"}},
+		{emoji: "🥐", keywords: []string{"breakfast", "בוקר", "ארוחת בוקר", "מאפה"}},
+		{emoji: "🍰", keywords: []string{"dessert", "קינוח", "גלידה", "וופל", "cake"}},
+		{emoji: "🥪", keywords: []string{"sandwich", "כריך", "טוסט", "bagel", "בייגל"}},
+		{emoji: "🥩", keywords: []string{"steak", "grill", "בשר", "סטייק", "גריל", "שווארמה"}},
+		{emoji: "🍽️", keywords: []string{"restaurant", "meal", "מסעדה", "ארוחה"}},
+	} {
+		for _, keyword := range candidate.keywords {
+			if strings.Contains(text, strings.ToLower(keyword)) {
+				return candidate.emoji
+			}
+		}
+	}
+
+	return "🎟️"
+}
+
+func listingOfferLine(listing *store.Listing) string {
+	for _, candidate := range []string{listing.Title, listing.Description} {
+		if cleaned := cleanListingOfferText(candidate, listing.MerchantName); cleaned != "" {
+			return truncate(cleaned, 34)
+		}
+	}
+
+	return fmt.Sprintf("שובר בשווי %s", formatPrice(listing.CouponValueAmount))
+}
+
+func cleanListingOfferText(value, merchantName string) string {
+	cleaned := strings.TrimSpace(value)
+	if cleaned == "" {
+		return ""
+	}
+
+	for _, separator := range []string{"\r", "\n", "|", "•", "·", ";", "!", "?", "—"} {
+		cleaned = strings.ReplaceAll(cleaned, separator, ".")
+	}
+
+	for _, segment := range strings.Split(cleaned, ".") {
+		normalized := collapseSpaces(stripLatinText(strings.ReplaceAll(strings.TrimSpace(segment), merchantName, "")))
+		if normalized == "" || listingOfferSegmentIsNoise(normalized) || !containsHebrew(normalized) {
+			continue
+		}
+		return normalized
+	}
+
+	return ""
+}
+
+func stripLatinText(value string) string {
+	var b strings.Builder
+	b.Grow(len(value))
+
+	for _, r := range value {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') {
+			continue
+		}
+		b.WriteRune(r)
+	}
+
+	return b.String()
+}
+
+func collapseSpaces(value string) string {
+	return strings.Join(strings.Fields(value), " ")
+}
+
+func containsHebrew(value string) bool {
+	for _, r := range value {
+		if r >= 0x0590 && r <= 0x05FF {
+			return true
+		}
+	}
+
+	return false
+}
+
+func listingOfferSegmentIsNoise(value string) bool {
+	lower := strings.ToLower(value)
+	for _, keyword := range []string{
+		"תקנון",
+		"תנאים",
+		"בכפוף",
+		"טלפון",
+		"אתר",
+		"יצירת קשר",
+		"פיתוח",
+		"פריוויו",
+		"לצפייה בלבד",
+		"לא כולל",
+		"ללא כפל",
+		"http",
+		"www",
+	} {
+		if strings.Contains(lower, keyword) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func (s *BotService) listingUrgencyLine(listing *store.Listing) string {
+	if !canStartCheckout(listing.Status, listing.AvailableInventoryCount) {
+		if listing.AvailableInventoryCount == 0 {
+			return "⏳ אזל כרגע, שווה לבדוק דיל נוסף"
+		}
+		return "⏳ כרגע לא זמין לרכישה"
+	}
+
+	if listing.NextCouponExpiryAt != nil {
+		now := time.Now()
+		expiry := listing.NextCouponExpiryAt.In(now.Location())
+		if sameDay(now, expiry) {
+			return "⏰ תקף להיום בלבד"
+		}
+		if expiry.Before(now.Add(48 * time.Hour)) {
+			return "⏰ תקף עד מחר, לא לפספס"
+		}
+	}
+
+	switch {
+	case listing.AvailableInventoryCount <= 2:
+		return "🔥 נשאר מעט, כדאי למהר"
+	case listing.AvailableInventoryCount <= 5:
+		return "⚡ נחטף מהר היום"
+	default:
+		return "🔥 לזמן מוגבל"
+	}
+}
+
+func sameDay(a, b time.Time) bool {
+	ay, am, ad := a.Date()
+	by, bm, bd := b.Date()
+	return ay == by && am == bm && ad == bd
+}
+
+func listingReassuranceLine(listing *store.Listing) string {
+	if !canStartCheckout(listing.Status, listing.AvailableInventoryCount) {
+		return ""
+	}
+
+	switch listingEmoji(listing) {
+	case "🍔", "🍕", "🍣", "☕", "🥐", "🍰", "🥪", "🥩", "🍽️":
+		return "טעים, משתלם ופופולרי"
+	default:
+		return "שווה לנצל עכשיו"
+	}
 }
 
 func (s *BotService) listingOfferKeyboard(listingID int64, listingStatus string, availableInventoryCount int64, allowAnotherDeal bool) *tgbotapi.InlineKeyboardMarkup {
@@ -528,7 +644,7 @@ func (s *BotService) formatFeaturedListingCaption(listing *store.Listing) string
 		html.EscapeString(listing.MerchantName),
 		html.EscapeString(truncate(offerName, 40)),
 		formatPrice(listing.CouponValueAmount),
-		formatPrice(listing.SalePriceAmount),
+		formatPrice(store.EffectiveListingPriceAmount(*listing)),
 		html.EscapeString(availability),
 	)
 }
@@ -596,17 +712,14 @@ func localListingPhotoPath(photoKey string) (string, bool) {
 }
 
 func (s *BotService) listingDetailKeyboardWithStatus(listingID int64, listingStatus string, availableInventoryCount int64) *tgbotapi.InlineKeyboardMarkup {
-	rows := make([][]tgbotapi.InlineKeyboardButton, 0, 2)
+	rows := make([][]tgbotapi.InlineKeyboardButton, 0, 1)
 	firstRow := make([]tgbotapi.InlineKeyboardButton, 0, 2)
 
 	if canStartCheckout(listingStatus, availableInventoryCount) {
-		firstRow = append(firstRow, tgbotapi.NewInlineKeyboardButtonData("\U0001F449 \u05d4\u05de\u05e9\u05da \u05dc\u05ea\u05e9\u05dc\u05d5\u05dd", formatCallbackData(CallbackConfirmBuy, listingID)))
+		firstRow = append(firstRow, tgbotapi.NewInlineKeyboardButtonData("\U0001F449 \u05e7\u05d1\u05dc \u05e7\u05d5\u05e4\u05d5\u05df", formatCallbackData(CallbackConfirmBuy, listingID)))
 	}
 	firstRow = append(firstRow, tgbotapi.NewInlineKeyboardButtonData("\U0001F449 \u05d3\u05d9\u05dc \u05d0\u05d7\u05e8", formatCallbackData(CallbackAnotherDeal, listingID)))
 	rows = append(rows, firstRow)
-	rows = append(rows, []tgbotapi.InlineKeyboardButton{
-		tgbotapi.NewInlineKeyboardButtonData("\u05ea\u05de\u05d9\u05db\u05d4", formatCallbackData(CallbackContactSupport, listingID)),
-	})
 
 	return &tgbotapi.InlineKeyboardMarkup{InlineKeyboard: rows}
 }
@@ -618,7 +731,7 @@ func canStartCheckout(listingStatus string, availableInventoryCount int64) bool 
 func filterBrowsableListings(listings []store.Listing, isDevelopment bool) []store.Listing {
 	filtered := make([]store.Listing, 0, len(listings))
 	for _, listing := range listings {
-		if listing.CouponValueAmount <= listing.SalePriceAmount {
+		if listing.CouponValueAmount <= store.EffectiveListingPriceAmount(listing) {
 			continue
 		}
 		if isDevelopment {

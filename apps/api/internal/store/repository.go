@@ -118,6 +118,9 @@ func (p *Postgres) CreateListing(ctx context.Context, params CreateListingParams
 	if strings.TrimSpace(params.FinalSaleDisclosureText) == "" {
 		return Listing{}, fmt.Errorf("%w: final sale disclosure text is required", ErrInvalidArgument)
 	}
+	if params.ResellPriceAmount <= 0 {
+		params.ResellPriceAmount = params.SalePriceAmount
+	}
 
 	row := p.Pool.QueryRow(ctx, `
 		INSERT INTO listings (
@@ -126,6 +129,7 @@ func (p *Postgres) CreateListing(ctx context.Context, params CreateListingParams
 			description,
 			coupon_value_amount,
 			sale_price_amount,
+			resell_price_amount,
 			currency_code,
 			expiry_summary,
 			terms_summary,
@@ -134,7 +138,7 @@ func (p *Postgres) CreateListing(ctx context.Context, params CreateListingParams
 			status,
 			created_by_admin_id,
 			published_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
 		RETURNING
 			id,
 			merchant_name,
@@ -142,6 +146,7 @@ func (p *Postgres) CreateListing(ctx context.Context, params CreateListingParams
 			description,
 			coupon_value_amount,
 			sale_price_amount,
+			resell_price_amount,
 			currency_code,
 			expiry_summary,
 			terms_summary,
@@ -160,6 +165,7 @@ func (p *Postgres) CreateListing(ctx context.Context, params CreateListingParams
 		params.Description,
 		params.CouponValueAmount,
 		params.SalePriceAmount,
+		params.ResellPriceAmount,
 		defaultString(params.CurrencyCode, "ILS"),
 		params.ExpirySummary,
 		params.TermsSummary,
@@ -297,6 +303,7 @@ func (p *Postgres) ListActiveListings(ctx context.Context) ([]Listing, error) {
 			l.description,
 			l.coupon_value_amount,
 			l.sale_price_amount,
+			l.resell_price_amount,
 			l.currency_code,
 			l.expiry_summary,
 			l.terms_summary,
@@ -419,7 +426,7 @@ func (p *Postgres) CreateDraftOrder(ctx context.Context, params CreateDraftOrder
 		coupon.ID,
 		params.OrderNumber,
 		listing.CurrencyCode,
-		listing.SalePriceAmount,
+		listingEffectivePriceAmount(listing),
 		params.FinalSaleAcknowledgedAt.UTC(),
 	)
 
@@ -1166,6 +1173,7 @@ func (p *Postgres) loadListingAvailabilityForUpdate(ctx context.Context, tx pgx.
 			description,
 			coupon_value_amount,
 			sale_price_amount,
+			resell_price_amount,
 			currency_code,
 			expiry_summary,
 			terms_summary,
@@ -1199,6 +1207,7 @@ func (p *Postgres) loadListingAvailabilityForUpdate(ctx context.Context, tx pgx.
 		&listing.Description,
 		&listing.CouponValueAmount,
 		&listing.SalePriceAmount,
+		&listing.ResellPriceAmount,
 		&listing.CurrencyCode,
 		&listing.ExpirySummary,
 		&listing.TermsSummary,
@@ -1604,6 +1613,7 @@ func scanListing(row pgx.Row) (Listing, error) {
 		&listing.Description,
 		&listing.CouponValueAmount,
 		&listing.SalePriceAmount,
+		&listing.ResellPriceAmount,
 		&listing.CurrencyCode,
 		&listing.ExpirySummary,
 		&listing.TermsSummary,
@@ -1629,6 +1639,7 @@ func scanListingWithInventory(row pgx.Row) (Listing, error) {
 		&listing.Description,
 		&listing.CouponValueAmount,
 		&listing.SalePriceAmount,
+		&listing.ResellPriceAmount,
 		&listing.CurrencyCode,
 		&listing.ExpirySummary,
 		&listing.TermsSummary,
@@ -1860,6 +1871,10 @@ func defaultString(value string, fallback string) string {
 		return fallback
 	}
 	return value
+}
+
+func listingEffectivePriceAmount(listing Listing) int64 {
+	return EffectiveListingPriceAmount(listing)
 }
 
 func mapStoreErr(err error) error {

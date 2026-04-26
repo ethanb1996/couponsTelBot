@@ -8,6 +8,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -24,11 +25,20 @@ func main() {
 }
 
 func run() error {
+	defaultPayPalFeeRate, err := floatEnvWithDefault("PAYPAL_FEE_PERCENT_RATE", 0)
+	if err != nil {
+		return err
+	}
+	defaultPayPalFixedFee, err := floatEnvWithDefault("PAYPAL_FIXED_FEE_AMOUNT", 0)
+	if err != nil {
+		return err
+	}
+
 	inputPath := flag.String("input", filepath.Clean("data/GetCategoryById_6982.txt"), "path to HAR export file")
 	photosDir := flag.String("photos-dir", filepath.Clean("data/photos"), "directory for downloaded product photos")
 	dryRun := flag.Bool("dry-run", false, "parse the HAR and report counts without downloading or writing to the database")
-	payPalFeeRate := flag.Float64("paypal-fee-rate", 0, "PayPal percentage fee as a decimal rate, for example 0.0349 for 3.49%")
-	payPalFixedFee := flag.Float64("paypal-fixed-fee", 0, "PayPal fixed fee in ILS major units, for example 0.49")
+	payPalFeeRate := flag.Float64("paypal-fee-rate", defaultPayPalFeeRate, "PayPal percentage fee as a decimal rate, for example 0.0349 for 3.49%")
+	payPalFixedFee := flag.Float64("paypal-fixed-fee", defaultPayPalFixedFee, "PayPal fixed fee in ILS major units, for example 0.49")
 	flag.Parse()
 
 	workingDir, err := os.Getwd()
@@ -107,4 +117,18 @@ func run() error {
 
 func majorUnitsToMinor(value float64) int64 {
 	return int64(math.Round(value * 100))
+}
+
+func floatEnvWithDefault(key string, fallback float64) (float64, error) {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return fallback, nil
+	}
+
+	parsed, err := strconv.ParseFloat(value, 64)
+	if err != nil {
+		return 0, fmt.Errorf("%s must be a valid number: %w", key, err)
+	}
+
+	return parsed, nil
 }

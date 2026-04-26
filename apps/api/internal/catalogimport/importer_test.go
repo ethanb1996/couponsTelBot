@@ -46,8 +46,12 @@ func TestParseHARExpandsMultiPriceCategory(t *testing.T) {
 		t.Fatalf("expected 2 listing records, got %d", len(records))
 	}
 
-	if records[0].SalePriceAmount != 9934 {
-		t.Fatalf("expected first sale price 9934, got %d", records[0].SalePriceAmount)
+	if records[0].SalePriceAmount != 7400 {
+		t.Fatalf("expected first source sale price 7400, got %d", records[0].SalePriceAmount)
+	}
+
+	if records[0].ResellPriceAmount != 9934 {
+		t.Fatalf("expected first resale price 9934, got %d", records[0].ResellPriceAmount)
 	}
 
 	if records[0].CouponValueAmount != 15000 {
@@ -109,8 +113,12 @@ func TestExpandCategoryComputesResalePriceWithDynamicProfitAndPayPalFees(t *test
 		t.Fatalf("expected coupon value 15000, got %d", records[0].CouponValueAmount)
 	}
 
-	if records[0].SalePriceAmount != 10204 {
-		t.Fatalf("expected computed resale price 10204, got %d", records[0].SalePriceAmount)
+	if records[0].SalePriceAmount != 7400 {
+		t.Fatalf("expected source sale price 7400, got %d", records[0].SalePriceAmount)
+	}
+
+	if records[0].ResellPriceAmount != 10204 {
+		t.Fatalf("expected computed resale price 10204, got %d", records[0].ResellPriceAmount)
 	}
 }
 
