@@ -36,6 +36,9 @@ type payPalCreateCheckoutInput struct {
 	Amount       int64
 	CurrencyCode string
 	Description  string
+	ItemName     string
+	ItemSummary  string
+	ItemImageURL string
 	ReturnURL    string
 	CancelURL    string
 }
@@ -102,20 +105,48 @@ func (c *paypalClient) CreateCheckout(ctx context.Context, input payPalCreateChe
 		return payPalCheckout{}, err
 	}
 
-	payload := map[string]any{
-		"intent": "CAPTURE",
-		"purchase_units": []map[string]any{
-			{
-				"reference_id": input.OrderNumber,
-				"custom_id":    strconv.FormatInt(input.OrderID, 10),
-				"invoice_id":   input.OrderNumber,
-				"description":  input.Description,
-				"amount": map[string]any{
-					"currency_code": defaultCurrency(input.CurrencyCode, "ILS"),
-					"value":         formatMinorUnits(input.Amount),
-				},
+	amountPayload := map[string]any{
+		"currency_code": defaultCurrency(input.CurrencyCode, "ILS"),
+		"value":         formatMinorUnits(input.Amount),
+	}
+
+	purchaseUnit := map[string]any{
+		"reference_id": input.OrderNumber,
+		"custom_id":    strconv.FormatInt(input.OrderID, 10),
+		"invoice_id":   input.OrderNumber,
+		"description":  input.Description,
+		"amount":       amountPayload,
+	}
+
+	if strings.TrimSpace(input.ItemName) != "" {
+		amountPayload["breakdown"] = map[string]any{
+			"item_total": map[string]any{
+				"currency_code": defaultCurrency(input.CurrencyCode, "ILS"),
+				"value":         formatMinorUnits(input.Amount),
 			},
-		},
+		}
+
+		item := map[string]any{
+			"name":     truncateText(input.ItemName, 127),
+			"quantity": "1",
+			"category": "DIGITAL_GOODS",
+			"unit_amount": map[string]any{
+				"currency_code": defaultCurrency(input.CurrencyCode, "ILS"),
+				"value":         formatMinorUnits(input.Amount),
+			},
+		}
+		if summary := strings.TrimSpace(input.ItemSummary); summary != "" {
+			item["description"] = truncateText(summary, 2048)
+		}
+		if imageURL := strings.TrimSpace(input.ItemImageURL); imageURL != "" {
+			item["image_url"] = imageURL
+		}
+		purchaseUnit["items"] = []map[string]any{item}
+	}
+
+	payload := map[string]any{
+		"intent":         "CAPTURE",
+		"purchase_units": []map[string]any{purchaseUnit},
 		"payment_source": map[string]any{
 			"paypal": map[string]any{
 				"experience_context": map[string]any{

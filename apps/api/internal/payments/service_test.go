@@ -266,6 +266,42 @@ func TestStartCheckoutReleasesReservationWhenProviderCreationFails(t *testing.T)
 	}
 }
 
+func TestBuildCheckoutItemImageURLUsesPublicAppBaseURL(t *testing.T) {
+	t.Parallel()
+
+	got := buildCheckoutItemImageURL("https://coupons.example.com", store.Listing{
+		PhotoKey: "deal.jpg",
+	})
+
+	if got != "https://coupons.example.com/assets/coupons/deal.jpg" {
+		t.Fatalf("expected public image url, got %q", got)
+	}
+}
+
+func TestBuildCheckoutItemImageURLSkipsLocalhost(t *testing.T) {
+	t.Parallel()
+
+	got := buildCheckoutItemImageURL("http://localhost:8080", store.Listing{
+		PhotoKey: "deal.jpg",
+	})
+
+	if got != "" {
+		t.Fatalf("expected empty image url for localhost, got %q", got)
+	}
+}
+
+func TestBuildCheckoutItemSummaryFallsBackToRedemptionInstructions(t *testing.T) {
+	t.Parallel()
+
+	got := buildCheckoutItemSummary(store.Listing{
+		RedemptionInstructions: "Show the QR code at checkout.",
+	})
+
+	if got != "Show the QR code at checkout." {
+		t.Fatalf("expected redemption instructions fallback, got %q", got)
+	}
+}
+
 type mockPaymentStore struct {
 	order                store.Order
 	user                 store.User

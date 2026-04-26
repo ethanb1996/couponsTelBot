@@ -5,6 +5,8 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -70,6 +72,7 @@ func NewRouter(deps Dependencies) (Router, error) {
 	mux.HandleFunc("/webhooks/payments/", paymentHandler.ServeHTTP)
 	mux.HandleFunc("/payments/paypal/return", payments.ReturnPage)
 	mux.HandleFunc("/payments/paypal/cancel", payments.CancelPage)
+	mux.HandleFunc("/assets/coupons/", couponPhotoHandler(filepath.Join("data", "photos")))
 
 	return Router{
 		Handler: Chain(
@@ -81,6 +84,30 @@ func NewRouter(deps Dependencies) (Router, error) {
 		),
 		PaymentService: paymentService,
 	}, nil
+}
+
+func couponPhotoHandler(baseDir string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
+			return
+		}
+
+		photoKey := strings.TrimSpace(strings.TrimPrefix(r.URL.Path, "/assets/coupons/"))
+		if photoKey == "" || strings.Contains(photoKey, "/") || strings.Contains(photoKey, `\`) {
+			http.NotFound(w, r)
+			return
+		}
+
+		filePath := filepath.Join(baseDir, photoKey)
+		info, err := os.Stat(filePath)
+		if err != nil || info.IsDir() {
+			http.NotFound(w, r)
+			return
+		}
+
+		http.ServeFile(w, r, filePath)
+	}
 }
 
 func healthHandler(db *store.Postgres) http.HandlerFunc {

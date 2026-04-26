@@ -4,44 +4,43 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/ethanb1996/couponsTelBot/apps/api/internal/config"
 	"github.com/ethanb1996/couponsTelBot/apps/api/internal/store"
 )
 
-func TestCreateListingsKeyboardHidesBuyForSoldOutListing(t *testing.T) {
+func TestListingOfferKeyboardHidesGetCouponForSoldOutListing(t *testing.T) {
 	service := &BotService{}
-	keyboard := service.createListingsKeyboard(1, []store.Listing{
-		{ID: 10, Title: "Available", AvailableInventoryCount: 1},
-		{ID: 11, Title: "Sold Out", AvailableInventoryCount: 0},
-	})
+	keyboard := service.listingOfferKeyboard(11, 0, true)
 
-	if keyboard == nil || len(keyboard.InlineKeyboard) < 2 {
-		t.Fatalf("expected keyboard rows, got %#v", keyboard)
+	if keyboard == nil || len(keyboard.InlineKeyboard) != 1 {
+		t.Fatalf("expected one keyboard row, got %#v", keyboard)
 	}
 
 	firstRow := keyboard.InlineKeyboard[0]
-	if len(firstRow) != 2 || firstRow[0].Text != "Buy" || firstRow[1].Text != "Details" {
-		t.Fatalf("unexpected first row: %#v", firstRow)
+	if len(firstRow) != 1 {
+		t.Fatalf("expected one button for sold-out listing, got %#v", firstRow)
 	}
-
-	secondRow := keyboard.InlineKeyboard[1]
-	if len(secondRow) != 1 || secondRow[0].Text != "Details" {
-		t.Fatalf("expected sold-out row to show details only, got %#v", secondRow)
+	if firstRow[0].CallbackData == nil || *firstRow[0].CallbackData != "another_deal:11" {
+		t.Fatalf("expected another-deal callback, got %#v", firstRow[0].CallbackData)
 	}
 }
 
-func TestListingDetailKeyboardHidesBuyNowWhenSoldOut(t *testing.T) {
+func TestListingDetailKeyboardHidesContinueToPaymentWhenSoldOut(t *testing.T) {
 	service := &BotService{}
-	keyboard := service.listingDetailKeyboard(12, 0, true)
+	keyboard := service.listingDetailKeyboard(12, 0)
 
 	if keyboard == nil || len(keyboard.InlineKeyboard) < 2 {
 		t.Fatalf("expected keyboard rows, got %#v", keyboard)
 	}
 
 	firstRow := keyboard.InlineKeyboard[0]
-	if len(firstRow) != 1 || firstRow[0].Text != "Back" {
-		t.Fatalf("expected sold-out detail row to show only Back, got %#v", firstRow)
+	if len(firstRow) != 1 {
+		t.Fatalf("expected one action in first row, got %#v", firstRow)
+	}
+	if firstRow[0].CallbackData == nil || *firstRow[0].CallbackData != "another_deal:12" {
+		t.Fatalf("expected another-deal callback, got %#v", firstRow[0].CallbackData)
 	}
 }
 
@@ -87,22 +86,65 @@ func TestFormatListingDetailsUsesPreviewNoticeInDevelopment(t *testing.T) {
 	}
 }
 
-func TestFormatListingsForDisplayShowsPreviewStatusInDevelopment(t *testing.T) {
+func TestFormatFeaturedListingCaptionShowsPreviewStatusInDevelopment(t *testing.T) {
 	service := &BotService{
 		config: &config.Config{AppEnv: "development"},
 	}
 
-	text := service.formatListingsForDisplay([]store.Listing{
-		{MerchantName: "Cafe", Title: "Breakfast coupon", SalePriceAmount: 3500, AvailableInventoryCount: 0},
+	text := service.formatFeaturedListingCaption(&store.Listing{
+		MerchantName:            "Cafe",
+		Title:                   "Breakfast coupon",
+		CouponValueAmount:       5000,
+		SalePriceAmount:         3500,
+		AvailableInventoryCount: 0,
 	})
 
-	if !strings.Contains(text, "Status: Preview only") {
-		t.Fatalf("expected preview status in development listing summary, got %q", text)
+	if !strings.Contains(text, "תצוגה בלבד") {
+		t.Fatalf("expected preview status in featured caption, got %q", text)
+	}
+	if !strings.Contains(text, "50₪") || !strings.Contains(text, "35₪") {
+		t.Fatalf("expected formatted prices in caption, got %q", text)
+	}
+}
+
+func TestFormatPriceUsesShekelSuffix(t *testing.T) {
+	if got := formatPrice(5950); got != "59.50₪" {
+		t.Fatalf("expected shekel suffix price, got %q", got)
+	}
+	if got := formatPrice(5900); got != "59₪" {
+		t.Fatalf("expected integer shekel suffix price, got %q", got)
 	}
 }
 
 func TestFormatHoldDurationUsesMinutes(t *testing.T) {
 	if got := formatHoldDuration(10 * time.Minute); got != "10 minutes" {
 		t.Fatalf("expected humanized minutes, got %q", got)
+	}
+}
+
+func TestTruncatePreservesUTF8ForHebrew(t *testing.T) {
+	input := "שובר זוגי לארוחת בוקר מפנקת"
+	got := truncate(input, 10)
+
+	if !utf8.ValidString(got) {
+		t.Fatalf("expected valid utf-8 output, got %q", got)
+	}
+	if !strings.HasSuffix(got, "...") {
+		t.Fatalf("expected ellipsis suffix, got %q", got)
+	}
+	if len([]rune(got)) != 13 {
+		t.Fatalf("expected 10 runes plus ellipsis, got %q", got)
+	}
+}
+
+func TestNormalizeTelegramTextRemovesInvalidUTF8(t *testing.T) {
+	input := string([]byte{'a', 0xff, 'b'})
+	got := normalizeTelegramText(input)
+
+	if !utf8.ValidString(got) {
+		t.Fatalf("expected valid utf-8 output, got %q", got)
+	}
+	if got != "ab" {
+		t.Fatalf("expected invalid byte to be removed, got %q", got)
 	}
 }

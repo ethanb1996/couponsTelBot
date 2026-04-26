@@ -3,10 +3,14 @@ package telegram
 import (
 	"context"
 	"fmt"
+	"html"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/ethanb1996/couponsTelBot/apps/api/internal/config"
 	"github.com/ethanb1996/couponsTelBot/apps/api/internal/payments"
@@ -16,6 +20,7 @@ import (
 
 const (
 	CallbackBuyListing     = "buy_listing"
+	CallbackAnotherDeal    = "another_deal"
 	CallbackConfirmBuy     = "confirm_buy"
 	CallbackViewDetails    = "view_details"
 	CallbackContactSupport = "contact_support"
@@ -74,7 +79,7 @@ func (s *BotService) handleCommand(ctx context.Context, message *tgbotapi.Messag
 }
 
 func (s *BotService) handleStart(ctx context.Context, message *tgbotapi.Message) error {
-	user, err := s.getOrCreateUser(ctx, message.From)
+	_, err := s.getOrCreateUser(ctx, message.From)
 	if err != nil {
 		s.logger.Error("failed to get or create user", "error", err, "user_id", message.From.ID)
 		return s.sendMessage(ctx, message.Chat.ID, "Something went wrong. Please try again.")
@@ -90,25 +95,7 @@ func (s *BotService) handleStart(ctx context.Context, message *tgbotapi.Message)
 		return s.sendMessage(ctx, message.Chat.ID, "No coupons available at the moment. Check back soon!")
 	}
 
-	displayCount := len(listings)
-	if displayCount > 3 {
-		displayCount = 3
-	}
-
-	text := "Welcome to CouponTelBot!\n\nHere are today's best deals:\n\n"
-
-	msg := tgbotapi.NewMessage(message.Chat.ID, "")
-	msg.Text = text + s.formatListingsForDisplay(listings[:displayCount])
-	msg.ParseMode = tgbotapi.ModeHTML
-	msg.ReplyMarkup = s.createListingsKeyboard(user.ID, listings[:displayCount])
-
-	_, err = s.botAPI.Send(msg)
-	if err != nil {
-		s.logger.Error("failed to send message", "error", err)
-		return err
-	}
-
-	return nil
+	return s.sendFeaturedListing(ctx, message.Chat.ID, listings, 0)
 }
 
 func (s *BotService) handleHelp(ctx context.Context, message *tgbotapi.Message) error {
@@ -124,8 +111,8 @@ func (s *BotService) handleHelp(ctx context.Context, message *tgbotapi.Message) 
 /help - Show this message
 
 <b>How to buy:</b>
-1. Type /start to see active coupons
-2. Press the <b>Buy</b> button on a coupon
+1. Type /start to see available coupons
+2. Press the coupon button on a deal
 3. Review the coupon details
 4. Confirm your purchase
 5. Complete payment
@@ -146,30 +133,33 @@ func (s *BotService) handleCallback(ctx context.Context, callback *tgbotapi.Call
 		return nil
 	}
 
-	action := parts[0]
-
-	switch action {
+	switch parts[0] {
 	case CallbackBuyListing:
 		if len(parts) < 2 {
 			return nil
 		}
 		listingID, _ := strconv.ParseInt(parts[1], 10, 64)
 		return s.handleBuyListing(ctx, callback, listingID)
-
+	case CallbackAnotherDeal:
+		if len(parts) < 2 {
+			return nil
+		}
+		currentListingID, _ := strconv.ParseInt(parts[1], 10, 64)
+		return s.handleAnotherDeal(ctx, callback.Message.Chat.ID, currentListingID)
 	case CallbackViewDetails:
 		if len(parts) < 2 {
 			return nil
 		}
 		listingID, _ := strconv.ParseInt(parts[1], 10, 64)
-		return s.handleViewDetails(ctx, callback.Message.Chat.ID, listingID, callback.From.ID)
-
+		return s.handleViewDetails(ctx, callback.Message.Chat.ID, listingID)
 	case CallbackConfirmBuy:
 		if len(parts) < 2 {
 			return nil
 		}
 		listingID, _ := strconv.ParseInt(parts[1], 10, 64)
 		return s.handleConfirmBuy(ctx, callback, listingID)
-
+	case CallbackContactSupport:
+		return s.handleContactSupport(ctx, callback.Message.Chat.ID)
 	default:
 		return nil
 	}
@@ -182,33 +172,38 @@ func (s *BotService) handleBuyListing(ctx context.Context, callback *tgbotapi.Ca
 		return nil
 	}
 
-	text := s.formatListingDetails(&listing)
-
-	edit := tgbotapi.NewEditMessageText(callback.Message.Chat.ID, callback.Message.MessageID, text)
-	edit.ParseMode = tgbotapi.ModeHTML
-	edit.ReplyMarkup = s.listingDetailKeyboard(listing.ID, listing.AvailableInventoryCount, true)
-
-	_, err = s.botAPI.Send(edit)
-	if err != nil {
-		s.logger.Error("failed to edit message", "error", err)
-	}
-	return nil
+	return s.sendListingDetails(ctx, callback.Message.Chat.ID, listing)
 }
 
-func (s *BotService) handleViewDetails(ctx context.Context, chatID int64, listingID int64, userID int64) error {
+func (s *BotService) handleViewDetails(ctx context.Context, chatID int64, listingID int64) error {
 	listing, err := s.store.GetListing(ctx, listingID)
 	if err != nil {
 		s.logger.Error("failed to get listing", "error", err, "listing_id", listingID)
 		return s.sendMessage(ctx, chatID, "Could not load coupon details.")
 	}
 
-	text := s.formatListingDetails(&listing)
-	msg := tgbotapi.NewMessage(chatID, text)
-	msg.ParseMode = tgbotapi.ModeHTML
-	msg.ReplyMarkup = s.listingDetailKeyboard(listing.ID, listing.AvailableInventoryCount, false)
+	return s.sendListingDetails(ctx, chatID, listing)
+}
 
-	_, err = s.botAPI.Send(msg)
-	return err
+func (s *BotService) handleAnotherDeal(ctx context.Context, chatID int64, currentListingID int64) error {
+	listings, err := s.loadStartListings(ctx)
+	if err != nil {
+		s.logger.Error("failed to fetch listings for another deal", "error", err)
+		return s.sendMessage(ctx, chatID, "Unable to load another deal right now. Please try again later.")
+	}
+	if len(listings) == 0 {
+		return s.sendMessage(ctx, chatID, "No coupons available at the moment. Check back soon!")
+	}
+
+	nextIndex := 0
+	for i, listing := range listings {
+		if listing.ID == currentListingID {
+			nextIndex = (i + 1) % len(listings)
+			break
+		}
+	}
+
+	return s.sendFeaturedListing(ctx, chatID, listings, nextIndex)
 }
 
 func (s *BotService) handleConfirmBuy(ctx context.Context, callback *tgbotapi.CallbackQuery, listingID int64) error {
@@ -268,7 +263,7 @@ Tap the PayPal button below to complete payment. We will deliver the coupon in T
 		formatHoldDuration(s.config.OpsCheckoutHoldDuration),
 	)
 
-	msg := tgbotapi.NewMessage(callback.Message.Chat.ID, checkoutText)
+	msg := tgbotapi.NewMessage(callback.Message.Chat.ID, normalizeTelegramText(checkoutText))
 	msg.ParseMode = tgbotapi.ModeHTML
 	msg.ReplyMarkup = tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(
@@ -281,6 +276,10 @@ Tap the PayPal button below to complete payment. We will deliver the coupon in T
 
 	_, err = s.botAPI.Send(msg)
 	return err
+}
+
+func (s *BotService) handleContactSupport(ctx context.Context, chatID int64) error {
+	return s.sendMessage(ctx, chatID, "Support is available here. Send your order number and what went wrong, and we will review it manually.")
 }
 
 func (s *BotService) getOrCreateUser(ctx context.Context, from *tgbotapi.User) (*store.User, error) {
@@ -297,38 +296,6 @@ func (s *BotService) getOrCreateUser(ctx context.Context, from *tgbotapi.User) (
 	return &user, nil
 }
 
-func (s *BotService) formatListingsForDisplay(listings []store.Listing) string {
-	text := ""
-	for i, listing := range listings {
-		priceILS := formatPrice(listing.SalePriceAmount)
-		expiryText := "Soon"
-		if listing.NextCouponExpiryAt != nil {
-			expiryText = listing.NextCouponExpiryAt.Format("Jan 2")
-		}
-
-		statusText := ""
-		if listing.AvailableInventoryCount == 0 {
-			if s.isDevelopmentMode() {
-				statusText = "\nStatus: Preview only"
-			} else {
-				statusText = "\nStatus: Sold out"
-			}
-		}
-
-		text += fmt.Sprintf(`<b>#%d %s</b>
-Coupon: %s
-Price: %s
-Expires: %s%s
-
-`, i+1, listing.MerchantName,
-			truncate(listing.Title, 30),
-			priceILS,
-			expiryText,
-			statusText)
-	}
-	return text
-}
-
 func (s *BotService) formatListingDetails(listing *store.Listing) string {
 	priceILS := formatPrice(listing.SalePriceAmount)
 	originalValue := formatPrice(listing.CouponValueAmount)
@@ -339,7 +306,7 @@ func (s *BotService) formatListingDetails(listing *store.Listing) string {
 	}
 
 	availabilityText := fmt.Sprintf("%d", listing.AvailableInventoryCount)
-	purchaseNotice := "Tap Buy Now to reserve this coupon for checkout."
+	purchaseNotice := "Tap Continue to Payment to reserve this coupon for checkout."
 	if listing.AvailableInventoryCount == 0 {
 		if s.isDevelopmentMode() {
 			availabilityText = "Preview only"
@@ -350,14 +317,14 @@ func (s *BotService) formatListingDetails(listing *store.Listing) string {
 		}
 	}
 
-	text := fmt.Sprintf(`<b>%s - %s</b>
+	return fmt.Sprintf(`<b>%s - %s</b>
 
 <b>What you get:</b>
 %s
 
 <b>Details:</b>
 - <b>Coupon Value:</b> %s
-- <b>Your Price:</b> %s (You save!)
+- <b>Your Price:</b> %s
 - <b>Expires:</b> %s
 - <b>Quantity Available:</b> %s
 
@@ -370,77 +337,67 @@ func (s *BotService) formatListingDetails(listing *store.Listing) string {
 %s
 
 All sales final. No refunds. Please read all terms before purchasing.`,
-		listing.MerchantName,
-		listing.Title,
-		listing.Description,
+		html.EscapeString(listing.MerchantName),
+		html.EscapeString(listing.Title),
+		html.EscapeString(listing.Description),
 		originalValue,
 		priceILS,
 		expiryText,
 		availabilityText,
-		listing.RedemptionInstructions,
-		listing.FinalSaleDisclosureText,
+		html.EscapeString(listing.RedemptionInstructions),
+		html.EscapeString(listing.FinalSaleDisclosureText),
 		purchaseNotice,
 	)
-
-	return text
 }
 
 func formatPrice(cents int64) string {
 	shekelAmount := float64(cents) / 100.0
-	return fmt.Sprintf("NIS %.2f", shekelAmount)
+	if cents%100 == 0 {
+		return fmt.Sprintf("%.0f\u20aa", shekelAmount)
+	}
+	return fmt.Sprintf("%.2f\u20aa", shekelAmount)
 }
 
 func truncate(s string, maxLen int) string {
-	if len(s) <= maxLen {
+	runes := []rune(s)
+	if len(runes) <= maxLen {
 		return s
 	}
-	return s[:maxLen] + "..."
+	return string(runes[:maxLen]) + "..."
 }
 
-func (s *BotService) createListingsKeyboard(userID int64, listings []store.Listing) *tgbotapi.InlineKeyboardMarkup {
-	keyboard := make([][]tgbotapi.InlineKeyboardButton, len(listings))
+func (s *BotService) listingOfferKeyboard(listingID int64, availableInventoryCount int64, allowAnotherDeal bool) *tgbotapi.InlineKeyboardMarkup {
+	rows := make([][]tgbotapi.InlineKeyboardButton, 0, 1)
+	firstRow := make([]tgbotapi.InlineKeyboardButton, 0, 2)
 
-	for i, listing := range listings {
-		row := []tgbotapi.InlineKeyboardButton{
-			tgbotapi.NewInlineKeyboardButtonData("Details", formatCallbackData(CallbackViewDetails, listing.ID)),
-		}
-		if listing.AvailableInventoryCount > 0 {
-			row = append([]tgbotapi.InlineKeyboardButton{
-				tgbotapi.NewInlineKeyboardButtonData("Buy", formatCallbackData(CallbackBuyListing, listing.ID)),
-			}, row...)
-		}
-		keyboard[i] = row
+	if availableInventoryCount > 0 {
+		firstRow = append(firstRow, tgbotapi.NewInlineKeyboardButtonData("\U0001F449 \u05e7\u05d1\u05dc \u05e7\u05d5\u05e4\u05d5\u05df", formatCallbackData(CallbackBuyListing, listingID)))
+	}
+	if allowAnotherDeal {
+		firstRow = append(firstRow, tgbotapi.NewInlineKeyboardButtonData("\U0001F449 \u05d3\u05d9\u05dc \u05d0\u05d7\u05e8", formatCallbackData(CallbackAnotherDeal, listingID)))
+	}
+	if len(firstRow) == 0 {
+		firstRow = append(firstRow, tgbotapi.NewInlineKeyboardButtonData("\u05e8\u05e7 \u05dc\u05d4\u05e6\u05d9\u05e5", formatCallbackData(CallbackViewDetails, listingID)))
 	}
 
-	keyboard = append(keyboard, []tgbotapi.InlineKeyboardButton{
-		tgbotapi.NewInlineKeyboardButtonData("Support", formatCallbackData(CallbackContactSupport, 0)),
-	})
-
-	return &tgbotapi.InlineKeyboardMarkup{
-		InlineKeyboard: keyboard,
-	}
+	rows = append(rows, firstRow)
+	return &tgbotapi.InlineKeyboardMarkup{InlineKeyboard: rows}
 }
 
-func (s *BotService) listingDetailKeyboard(listingID int64, availableInventoryCount int64, includeBack bool) *tgbotapi.InlineKeyboardMarkup {
+func (s *BotService) listingDetailKeyboard(listingID int64, availableInventoryCount int64) *tgbotapi.InlineKeyboardMarkup {
 	rows := make([][]tgbotapi.InlineKeyboardButton, 0, 2)
 	firstRow := make([]tgbotapi.InlineKeyboardButton, 0, 2)
-	if availableInventoryCount > 0 {
-		firstRow = append(firstRow, tgbotapi.NewInlineKeyboardButtonData("Buy Now", formatCallbackData(CallbackConfirmBuy, listingID)))
-	}
-	if includeBack {
-		firstRow = append(firstRow, tgbotapi.NewInlineKeyboardButtonData("Back", "back_to_listings"))
-	}
-	if len(firstRow) > 0 {
-		rows = append(rows, firstRow)
-	}
 
+	if availableInventoryCount > 0 {
+		firstRow = append(firstRow, tgbotapi.NewInlineKeyboardButtonData("\U0001F449 \u05d4\u05de\u05e9\u05da \u05dc\u05ea\u05e9\u05dc\u05d5\u05dd", formatCallbackData(CallbackConfirmBuy, listingID)))
+	}
+	firstRow = append(firstRow, tgbotapi.NewInlineKeyboardButtonData("\U0001F449 \u05d3\u05d9\u05dc \u05d0\u05d7\u05e8", formatCallbackData(CallbackAnotherDeal, listingID)))
+	rows = append(rows, firstRow)
 	rows = append(rows, []tgbotapi.InlineKeyboardButton{
-		tgbotapi.NewInlineKeyboardButtonData("Support", formatCallbackData(CallbackContactSupport, listingID)),
+		tgbotapi.NewInlineKeyboardButtonData("\u05ea\u05de\u05d9\u05db\u05d4", formatCallbackData(CallbackContactSupport, listingID)),
 	})
 
-	return &tgbotapi.InlineKeyboardMarkup{
-		InlineKeyboard: rows,
-	}
+	return &tgbotapi.InlineKeyboardMarkup{InlineKeyboard: rows}
 }
 
 func formatHoldDuration(value time.Duration) string {
@@ -477,10 +434,94 @@ func parseCallbackData(data string) []string {
 }
 
 func (s *BotService) sendMessage(ctx context.Context, chatID int64, text string) error {
-	msg := tgbotapi.NewMessage(chatID, text)
+	msg := tgbotapi.NewMessage(chatID, normalizeTelegramText(text))
 	msg.ParseMode = tgbotapi.ModeHTML
 	_, err := s.botAPI.Send(msg)
 	return err
+}
+
+func (s *BotService) sendFeaturedListing(ctx context.Context, chatID int64, listings []store.Listing, index int) error {
+	if len(listings) == 0 {
+		return s.sendMessage(ctx, chatID, "No coupons available at the moment. Check back soon!")
+	}
+	if index < 0 || index >= len(listings) {
+		index = 0
+	}
+
+	listing := listings[index]
+	caption := normalizeTelegramText(s.formatFeaturedListingCaption(&listing))
+	keyboard := s.listingOfferKeyboard(listing.ID, listing.AvailableInventoryCount, len(listings) > 1)
+
+	if photoPath, ok := localListingPhotoPath(listing.PhotoKey); ok {
+		msg := tgbotapi.NewPhoto(chatID, tgbotapi.FilePath(photoPath))
+		msg.Caption = caption
+		msg.ParseMode = tgbotapi.ModeHTML
+		msg.ReplyMarkup = keyboard
+		_, err := s.botAPI.Send(msg)
+		return err
+	}
+
+	msg := tgbotapi.NewMessage(chatID, caption)
+	msg.ParseMode = tgbotapi.ModeHTML
+	msg.ReplyMarkup = keyboard
+	_, err := s.botAPI.Send(msg)
+	return err
+}
+
+func (s *BotService) sendListingDetails(ctx context.Context, chatID int64, listing store.Listing) error {
+	if photoPath, ok := localListingPhotoPath(listing.PhotoKey); ok {
+		photo := tgbotapi.NewPhoto(chatID, tgbotapi.FilePath(photoPath))
+		photo.Caption = normalizeTelegramText(s.formatListingPhotoCaption(&listing))
+		photo.ParseMode = tgbotapi.ModeHTML
+		if _, err := s.botAPI.Send(photo); err != nil {
+			s.logger.Error("failed to send listing detail photo", "error", err, "listing_id", listing.ID)
+		}
+	}
+
+	msg := tgbotapi.NewMessage(chatID, normalizeTelegramText(s.formatListingDetails(&listing)))
+	msg.ParseMode = tgbotapi.ModeHTML
+	msg.ReplyMarkup = s.listingDetailKeyboard(listing.ID, listing.AvailableInventoryCount)
+
+	_, err := s.botAPI.Send(msg)
+	if err != nil {
+		s.logger.Error("failed to send listing detail message", "error", err, "listing_id", listing.ID)
+	}
+	return err
+}
+
+func (s *BotService) formatFeaturedListingCaption(listing *store.Listing) string {
+	availability := fmt.Sprintf("%d \u05e7\u05d5\u05e4\u05d5\u05e0\u05d9\u05dd", listing.AvailableInventoryCount)
+	if listing.AvailableInventoryCount == 0 {
+		if s.isDevelopmentMode() {
+			availability = "\u05ea\u05e6\u05d5\u05d2\u05d4 \u05d1\u05dc\u05d1\u05d3"
+		} else {
+			availability = "\u05d0\u05d6\u05dc \u05d4\u05de\u05dc\u05d0\u05d9"
+		}
+	}
+
+	offerName := strings.TrimSpace(listing.Title)
+	if offerName == "" {
+		offerName = strings.TrimSpace(listing.MerchantName)
+	}
+
+	return fmt.Sprintf(`<b>\U0001F525 \u05d3\u05d9\u05dc \u05d7\u05dd \u05e2\u05db\u05e9\u05d9\u05d5!</b>
+
+\U0001F39F\uFE0F <b>%s</b>
+%s
+
+\U0001F48E \u05d1\u05de\u05e7\u05d5\u05dd: %s
+\U0001F4A5 \u05e2\u05db\u05e9\u05d9\u05d5: %s
+\u23F3 \u05e0\u05e9\u05d0\u05e8\u05d5: %s`,
+		html.EscapeString(listing.MerchantName),
+		html.EscapeString(truncate(offerName, 40)),
+		formatPrice(listing.CouponValueAmount),
+		formatPrice(listing.SalePriceAmount),
+		html.EscapeString(availability),
+	)
+}
+
+func (s *BotService) formatListingPhotoCaption(listing *store.Listing) string {
+	return fmt.Sprintf("<b>%s</b>\n%s", html.EscapeString(listing.MerchantName), html.EscapeString(truncate(listing.Title, 80)))
 }
 
 func (s *BotService) loadStartListings(ctx context.Context) ([]store.Listing, error) {
@@ -509,11 +550,33 @@ func (s *BotService) isDevelopmentMode() bool {
 }
 
 func (s *BotService) SendHTMLMessage(ctx context.Context, telegramUserID int64, text string) (int64, error) {
-	msg := tgbotapi.NewMessage(telegramUserID, text)
+	msg := tgbotapi.NewMessage(telegramUserID, normalizeTelegramText(text))
 	msg.ParseMode = tgbotapi.ModeHTML
 	sent, err := s.botAPI.Send(msg)
 	if err != nil {
 		return 0, err
 	}
 	return int64(sent.MessageID), nil
+}
+
+func normalizeTelegramText(text string) string {
+	if utf8.ValidString(text) {
+		return text
+	}
+	return strings.ToValidUTF8(text, "")
+}
+
+func localListingPhotoPath(photoKey string) (string, bool) {
+	photoKey = strings.TrimSpace(photoKey)
+	if photoKey == "" || strings.Contains(photoKey, "/") || strings.Contains(photoKey, `\`) {
+		return "", false
+	}
+
+	path := filepath.Join("data", "photos", photoKey)
+	info, err := os.Stat(path)
+	if err != nil || info.IsDir() {
+		return "", false
+	}
+
+	return path, true
 }

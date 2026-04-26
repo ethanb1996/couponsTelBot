@@ -11,9 +11,11 @@ import (
 	"html"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/ethanb1996/couponsTelBot/apps/api/internal/config"
 	"github.com/ethanb1996/couponsTelBot/apps/api/internal/store"
@@ -100,6 +102,9 @@ func (s *Service) StartCheckout(ctx context.Context, order store.Order, listing 
 		Amount:       order.SalePriceAmount,
 		CurrencyCode: order.CurrencyCode,
 		Description:  buildCheckoutDescription(listing),
+		ItemName:     buildCheckoutItemName(listing),
+		ItemSummary:  buildCheckoutItemSummary(listing),
+		ItemImageURL: buildCheckoutItemImageURL(s.appBaseURL, listing),
 		ReturnURL:    s.appBaseURL + "/payments/paypal/return?order_number=" + order.OrderNumber,
 		CancelURL:    s.appBaseURL + "/payments/paypal/cancel?order_number=" + order.OrderNumber,
 	})
@@ -372,6 +377,40 @@ func buildCheckoutDescription(listing store.Listing) string {
 	return truncateText(description, 127)
 }
 
+func buildCheckoutItemName(listing store.Listing) string {
+	name := strings.TrimSpace(listing.Title)
+	if name == "" {
+		name = strings.TrimSpace(listing.MerchantName)
+	}
+	return truncateText(name, 127)
+}
+
+func buildCheckoutItemSummary(listing store.Listing) string {
+	summary := strings.TrimSpace(listing.Description)
+	if summary == "" {
+		summary = strings.TrimSpace(listing.RedemptionInstructions)
+	}
+	return truncateText(summary, 2048)
+}
+
+func buildCheckoutItemImageURL(appBaseURL string, listing store.Listing) string {
+	if strings.TrimSpace(listing.PhotoKey) == "" {
+		return ""
+	}
+
+	parsed, err := url.Parse(strings.TrimSpace(appBaseURL))
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return ""
+	}
+
+	host := strings.ToLower(parsed.Hostname())
+	if host == "" || host == "localhost" || host == "127.0.0.1" || host == "0.0.0.0" || strings.HasSuffix(host, ".local") {
+		return ""
+	}
+
+	return strings.TrimRight(parsed.String(), "/") + "/assets/coupons/" + url.PathEscape(strings.TrimSpace(listing.PhotoKey))
+}
+
 func buildCouponDeliveryMessage(order store.Order, listing store.Listing, coupon store.Coupon, couponCode string) string {
 	return fmt.Sprintf(`<b>Payment confirmed for order %s</b>
 
@@ -423,10 +462,21 @@ func hashDeliveryPayload(text string) string {
 }
 
 func truncateText(value string, limit int) string {
-	if limit <= 0 || len(value) <= limit {
+	if limit <= 0 {
 		return value
 	}
-	return value[:limit]
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	if !utf8.ValidString(value) {
+		value = strings.ToValidUTF8(value, "")
+	}
+	runes := []rune(value)
+	if len(runes) <= limit {
+		return value
+	}
+	return string(runes[:limit])
 }
 
 func defaultCurrency(value string, fallback string) string {
