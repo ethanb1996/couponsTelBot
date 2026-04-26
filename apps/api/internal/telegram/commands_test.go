@@ -102,16 +102,16 @@ func TestFormatFeaturedListingCaptionShowsPreviewStatusInDevelopment(t *testing.
 	if !strings.Contains(text, "תצוגה בלבד") {
 		t.Fatalf("expected preview status in featured caption, got %q", text)
 	}
-	if !strings.Contains(text, "50₪") || !strings.Contains(text, "35₪") {
+	if !strings.Contains(text, "50.0") || !strings.Contains(text, "35.0") || !strings.Contains(text, "₪") {
 		t.Fatalf("expected formatted prices in caption, got %q", text)
 	}
 }
 
 func TestFormatPriceUsesShekelSuffix(t *testing.T) {
-	if got := formatPrice(5950); got != "59.50₪" {
+	if got := formatPrice(5950); stripBidiControls(got) != "59.50 ₪" {
 		t.Fatalf("expected shekel suffix price, got %q", got)
 	}
-	if got := formatPrice(5900); got != "59₪" {
+	if got := formatPrice(5900); stripBidiControls(got) != "59.0 ₪" {
 		t.Fatalf("expected integer shekel suffix price, got %q", got)
 	}
 }
@@ -147,4 +147,10 @@ func TestNormalizeTelegramTextRemovesInvalidUTF8(t *testing.T) {
 	if got != "ab" {
 		t.Fatalf("expected invalid byte to be removed, got %q", got)
 	}
+}
+
+func stripBidiControls(value string) string {
+	value = strings.ReplaceAll(value, "\u2066", "")
+	value = strings.ReplaceAll(value, "\u2069", "")
+	return value
 }

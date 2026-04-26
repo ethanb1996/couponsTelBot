@@ -352,10 +352,18 @@ All sales final. No refunds. Please read all terms before purchasing.`,
 
 func formatPrice(cents int64) string {
 	shekelAmount := float64(cents) / 100.0
+	var formatted string
 	if cents%100 == 0 {
-		return fmt.Sprintf("%.0f\u20aa", shekelAmount)
+		formatted = fmt.Sprintf("%.1f", shekelAmount)
+	} else if cents%10 == 0 {
+		formatted = fmt.Sprintf("%.1f", shekelAmount)
+	} else {
+		formatted = fmt.Sprintf("%.2f", shekelAmount)
 	}
-	return fmt.Sprintf("%.2f\u20aa", shekelAmount)
+
+	// Isolate the amount as an LTR run so it keeps the expected visual order
+	// inside surrounding Hebrew/RTL text.
+	return "\u2066" + formatted + "\u00a0\u20aa" + "\u2069"
 }
 
 func truncate(s string, maxLen int) string {
@@ -504,14 +512,12 @@ func (s *BotService) formatFeaturedListingCaption(listing *store.Listing) string
 		offerName = strings.TrimSpace(listing.MerchantName)
 	}
 
-	return fmt.Sprintf(`<b>\U0001F525 \u05d3\u05d9\u05dc \u05d7\u05dd \u05e2\u05db\u05e9\u05d9\u05d5!</b>
-
-\U0001F39F\uFE0F <b>%s</b>
-%s
-
-\U0001F48E \u05d1\u05de\u05e7\u05d5\u05dd: %s
-\U0001F4A5 \u05e2\u05db\u05e9\u05d9\u05d5: %s
-\u23F3 \u05e0\u05e9\u05d0\u05e8\u05d5: %s`,
+	return fmt.Sprintf("<b>\U0001F525 \u05d3\u05d9\u05dc \u05d7\u05dd \u05e2\u05db\u05e9\u05d9\u05d5!</b>\n\n"+
+		"\U0001F39F\uFE0F <b>%s</b>\n"+
+		"%s\n\n"+
+		"\U0001F48E \u05d1\u05de\u05e7\u05d5\u05dd: %s\n"+
+		"\U0001F4A5 \u05e2\u05db\u05e9\u05d9\u05d5: %s\n"+
+		"\u23F3 \u05e0\u05e9\u05d0\u05e8\u05d5: %s",
 		html.EscapeString(listing.MerchantName),
 		html.EscapeString(truncate(offerName, 40)),
 		formatPrice(listing.CouponValueAmount),
