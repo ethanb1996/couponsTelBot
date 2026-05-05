@@ -179,6 +179,9 @@ func TestProcessFulfillmentJobCapturesAndDeliversCoupon(t *testing.T) {
 	if deliverer.sendCount != 1 {
 		t.Fatalf("expected one coupon delivery, got %d", deliverer.sendCount)
 	}
+	if deliverer.postDeliveryOffers != 1 {
+		t.Fatalf("expected one post-delivery offer, got %d", deliverer.postDeliveryOffers)
+	}
 	if len(mockStore.recordDeliveryEvents) != 1 || mockStore.recordDeliveryEvents[0].Status != "confirmed" {
 		t.Fatalf("expected one confirmed delivery event, got %+v", mockStore.recordDeliveryEvents)
 	}
@@ -610,8 +613,10 @@ func (m *mockPaymentStore) FailFulfillmentJobTerminal(ctx context.Context, param
 }
 
 type stubDeliverer struct {
-	sendCount int
-	err       error
+	sendCount          int
+	postDeliveryOffers int
+	err                error
+	postDeliveryErr    error
 }
 
 func (s *stubDeliverer) SendHTMLMessage(ctx context.Context, telegramUserID int64, text string) (int64, error) {
@@ -620,6 +625,11 @@ func (s *stubDeliverer) SendHTMLMessage(ctx context.Context, telegramUserID int6
 		return 0, s.err
 	}
 	return int64(9000 + s.sendCount), nil
+}
+
+func (s *stubDeliverer) SendPostDeliveryOffer(ctx context.Context, telegramUserID int64) error {
+	s.postDeliveryOffers++
+	return s.postDeliveryErr
 }
 
 type stubFulfillmentNotifier struct {

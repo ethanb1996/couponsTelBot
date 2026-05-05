@@ -43,6 +43,7 @@ type CheckoutLink struct {
 
 type CouponDeliverer interface {
 	SendHTMLMessage(ctx context.Context, telegramUserID int64, text string) (int64, error)
+	SendPostDeliveryOffer(ctx context.Context, telegramUserID int64) error
 }
 
 type FulfillmentNotifier interface {
@@ -307,7 +308,20 @@ func (s *Service) ProcessFulfillmentJob(ctx context.Context, job store.Fulfillme
 		JobID:    job.ID,
 		LastStep: "delivery_recorded",
 	})
-	return err
+	if err != nil {
+		return err
+	}
+
+	if err := s.deliverer.SendPostDeliveryOffer(ctx, preparation.User.TelegramUserID); err != nil {
+		s.logger.Warn("failed to send post-delivery offer",
+			"order_id", preparation.Order.ID,
+			"job_id", job.ID,
+			"telegram_user_id", preparation.User.TelegramUserID,
+			"error", err,
+		)
+	}
+
+	return nil
 }
 
 func (s *Service) recordFailedDeliveryState(ctx context.Context, orderID int64, couponID int64, payloadHash string, deliveryErr error) error {

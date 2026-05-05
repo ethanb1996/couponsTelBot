@@ -705,6 +705,30 @@ func (s *BotService) SendHTMLMessage(ctx context.Context, telegramUserID int64, 
 	return int64(sent.MessageID), nil
 }
 
+func (s *BotService) SendPostDeliveryOffer(ctx context.Context, telegramUserID int64) error {
+	if s == nil {
+		return nil
+	}
+	if telegramUserID == 0 {
+		return fmt.Errorf("telegram user id is required")
+	}
+
+	listings, err := s.loadStartListings(ctx)
+	if err != nil {
+		return err
+	}
+	if len(listings) == 0 {
+		return nil
+	}
+
+	message := "Want another coupon? Here is a fresh deal:"
+	if err := s.sendMessage(ctx, telegramUserID, message); err != nil {
+		return err
+	}
+
+	return s.sendFeaturedListing(ctx, telegramUserID, listings, 0)
+}
+
 func (s *BotService) NotifyExpiredCheckoutHold(ctx context.Context, hold store.ReleasedCheckoutHold) error {
 	if s == nil {
 		return nil
