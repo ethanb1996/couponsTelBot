@@ -1,6 +1,7 @@
 # Go cache
 .gocache/
 .gomodcache/
+.gocache-local/
 .gocache-checkout-hold/
 
 # Build output
