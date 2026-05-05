@@ -803,16 +803,13 @@ func (p *Postgres) PrepareFulfillment(ctx context.Context, orderID int64) (Fulfi
 	if order.CouponID == nil {
 		return preparation, ErrReservedCouponRequired
 	}
-	if order.Status != orderStatusPaid && order.Status != orderStatusDeliveryPending && order.Status != orderStatusDelivered {
-		return preparation, ErrOrderNotReadyForCoupon
-	}
 
 	hasSuccessfulPayment, err := orderHasSuccessfulPayment(ctx, tx, order.ID)
 	if err != nil {
 		return FulfillmentPreparation{}, err
 	}
-	if !hasSuccessfulPayment {
-		return preparation, ErrPaymentRequired
+	if err := fulfillmentStateError(order.Status, hasSuccessfulPayment); err != nil {
+		return preparation, err
 	}
 
 	row := tx.QueryRow(ctx, `
@@ -937,6 +934,24 @@ func (p *Postgres) PrepareFulfillment(ctx context.Context, orderID int64) (Fulfi
 	}
 
 	return preparation, nil
+}
+
+func fulfillmentStateError(orderStatus string, hasSuccessfulPayment bool) error {
+	if !hasSuccessfulPayment {
+		switch orderStatus {
+		case orderStatusPendingPayment, orderStatusPaid, orderStatusDeliveryPending, orderStatusDelivered:
+			return ErrPaymentRequired
+		default:
+			return ErrOrderNotReadyForCoupon
+		}
+	}
+
+	switch orderStatus {
+	case orderStatusPaid, orderStatusDeliveryPending, orderStatusDelivered:
+		return nil
+	default:
+		return ErrOrderNotReadyForCoupon
+	}
 }
 
 func (p *Postgres) AssignAvailableCoupon(ctx context.Context, orderID int64) (Coupon, error) {

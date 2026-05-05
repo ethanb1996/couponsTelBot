@@ -462,19 +462,27 @@ func (p *Postgres) EnqueueFulfillmentJob(ctx context.Context, params EnqueueFulf
 		SET
 			provider_checkout_reference = COALESCE(NULLIF(EXCLUDED.provider_checkout_reference, ''), fulfillment_jobs.provider_checkout_reference),
 			status = CASE
-				WHEN fulfillment_jobs.status IN ('succeeded', 'failed_terminal', 'processing') THEN fulfillment_jobs.status
+				WHEN fulfillment_jobs.status IN ('succeeded', 'processing') THEN fulfillment_jobs.status
+				WHEN fulfillment_jobs.status = 'failed_terminal'
+					AND NOT (fulfillment_jobs.last_step = 'prepare_fulfillment' AND fulfillment_jobs.last_error = $4) THEN fulfillment_jobs.status
 				ELSE 'pending'
 			END,
 			next_attempt_at = CASE
-				WHEN fulfillment_jobs.status IN ('succeeded', 'failed_terminal', 'processing') THEN fulfillment_jobs.next_attempt_at
+				WHEN fulfillment_jobs.status IN ('succeeded', 'processing') THEN fulfillment_jobs.next_attempt_at
+				WHEN fulfillment_jobs.status = 'failed_terminal'
+					AND NOT (fulfillment_jobs.last_step = 'prepare_fulfillment' AND fulfillment_jobs.last_error = $4) THEN fulfillment_jobs.next_attempt_at
 				ELSE NOW()
 			END,
 			last_step = CASE
-				WHEN fulfillment_jobs.status IN ('succeeded', 'failed_terminal') THEN fulfillment_jobs.last_step
+				WHEN fulfillment_jobs.status = 'succeeded' THEN fulfillment_jobs.last_step
+				WHEN fulfillment_jobs.status = 'failed_terminal'
+					AND NOT (fulfillment_jobs.last_step = 'prepare_fulfillment' AND fulfillment_jobs.last_error = $4) THEN fulfillment_jobs.last_step
 				ELSE EXCLUDED.last_step
 			END,
 			last_error = CASE
-				WHEN fulfillment_jobs.status IN ('succeeded', 'failed_terminal') THEN fulfillment_jobs.last_error
+				WHEN fulfillment_jobs.status = 'succeeded' THEN fulfillment_jobs.last_error
+				WHEN fulfillment_jobs.status = 'failed_terminal'
+					AND NOT (fulfillment_jobs.last_step = 'prepare_fulfillment' AND fulfillment_jobs.last_error = $4) THEN fulfillment_jobs.last_error
 				ELSE ''
 			END,
 			locked_at = CASE
@@ -494,7 +502,7 @@ func (p *Postgres) EnqueueFulfillmentJob(ctx context.Context, params EnqueueFulf
 			locked_at,
 			created_at,
 			updated_at
-	`, params.OrderID, params.ProviderCheckoutReference, params.LastStep)
+	`, params.OrderID, params.ProviderCheckoutReference, params.LastStep, ErrOrderNotReadyForCoupon.Error())
 
 	job, err := scanFulfillmentJob(row)
 	if err != nil {
