@@ -310,6 +310,33 @@ func (p *Postgres) UpdateListing(ctx context.Context, listingID int64, params Cr
 	return listing, nil
 }
 
+func (p *Postgres) BulkUpdateListingStatus(ctx context.Context, status string) (int64, error) {
+	if err := p.ensurePool(); err != nil {
+		return 0, err
+	}
+	if strings.TrimSpace(status) == "" {
+		return 0, fmt.Errorf("%w: listing status is required", ErrInvalidArgument)
+	}
+
+	tag, err := p.Pool.Exec(ctx, `
+		UPDATE listings
+		SET
+			status = $1,
+			published_at = CASE
+				WHEN $1 = 'active' AND published_at IS NULL THEN NOW()
+				ELSE published_at
+			END,
+			updated_at = NOW()
+	`,
+		status,
+	)
+	if err != nil {
+		return 0, mapStoreErr(err)
+	}
+
+	return tag.RowsAffected(), nil
+}
+
 func (p *Postgres) UpdateListingStatus(ctx context.Context, listingID int64, status string) (Listing, error) {
 	if err := p.ensurePool(); err != nil {
 		return Listing{}, err
@@ -853,6 +880,7 @@ func scanListingInventorySummary(row interface {
 		&summary.CreatedAt,
 		&summary.UpdatedAt,
 	)
+	summary.AvailableInventoryCount = summary.AvailableCoupons
 	return summary, err
 }
 

@@ -90,6 +90,12 @@
     <div class="card">
       <h2>Listing Inventory</h2>
       <p class="muted">Create listings here, then open a detail page to publish, pause, or ingest coupons.</p>
+      <div style="margin-bottom: 1rem;">
+        <form method="post" action="/admin/listings" style="display: inline;">
+          <input type="hidden" name="action" value="publish_all">
+          <button type="submit" style="background-color: #10b981; color: white; border: none; cursor: pointer;">Mark All as Active</button>
+        </form>
+      </div>
       <table>
         <thead>
           <tr>

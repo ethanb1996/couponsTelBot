@@ -180,6 +180,18 @@ func (h *Handler) listings(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
+		action := strings.TrimSpace(r.PostForm.Get("action"))
+		if action == "publish_all" {
+			updated, err := h.store.BulkUpdateListingStatus(r.Context(), "active")
+			if err != nil {
+				h.redirectWithError(w, r, "/admin/listings", fmt.Sprintf("failed to publish all listings: %v", err))
+				return
+			}
+			h.recordAdminAction(r.Context(), h.operatorID(r), "listing", 0, "publish_all_listings", nil, map[string]interface{}{"count": updated}, fmt.Sprintf("bulk published %d listings", updated))
+			h.redirectWithSuccess(w, r, "/admin/listings", fmt.Sprintf("%d listings marked as active", updated))
+			return
+		}
+
 		listing, err := h.store.CreateListing(r.Context(), store.CreateListingParams{
 			MerchantName:            strings.TrimSpace(r.PostForm.Get("merchant_name")),
 			Title:                   strings.TrimSpace(r.PostForm.Get("title")),

@@ -122,6 +122,46 @@ func TestExpandCategoryComputesResalePriceWithDynamicProfitAndPayPalFees(t *test
 	}
 }
 
+func TestExpandCategoryRoundsDecimalSourcePriceUpToWholeShekel(t *testing.T) {
+	category := sourceCategory{
+		CategoryID:   9901,
+		CategoryName: "Lunch Voucher 50",
+		SupplierName: "Supplier A",
+		Prices:       []float64{38.5},
+		Business: sourceBusiness{
+			Name: "Merchant A",
+		},
+		Variants: []sourceVariant{
+			{
+				Name:      "Lunch Voucher 38.5",
+				Price:     38.5,
+				KupaPrice: 50,
+			},
+		},
+	}
+
+	records, rejectedImportKeys, err := expandCategory(category, category, true, Options{})
+	if err != nil {
+		t.Fatalf("expandCategory returned error: %v", err)
+	}
+
+	if len(rejectedImportKeys) != 0 {
+		t.Fatalf("expected no rejected import keys, got %v", rejectedImportKeys)
+	}
+
+	if len(records) != 1 {
+		t.Fatalf("expected 1 listing record, got %d", len(records))
+	}
+
+	if records[0].SalePriceAmount != 3900 {
+		t.Fatalf("expected source sale price 3900 after rounding up, got %d", records[0].SalePriceAmount)
+	}
+
+	if records[0].Title != "Lunch Voucher 38.5" {
+		t.Fatalf("expected matched variant title, got %q", records[0].Title)
+	}
+}
+
 func TestExpandCategoryRejectsListingsWhoseResalePriceReachesCouponValue(t *testing.T) {
 	category := sourceCategory{
 		CategoryID:   66294,
@@ -210,6 +250,19 @@ func TestInferCouponValueFallsBackToSalePrice(t *testing.T) {
 	value := inferCouponValueAmount(category, 10500)
 	if value != 10500 {
 		t.Fatalf("expected fallback sale price, got %d", value)
+	}
+}
+
+func TestInferCouponValueRoundsDecimalFaceValueUpToWholeShekel(t *testing.T) {
+	category := sourceCategory{
+		CategoryName:     "Lunch Voucher 31.12",
+		ShortDescription: "Great value",
+		Description:      "Use like cash",
+	}
+
+	value := inferCouponValueAmount(category, 3000)
+	if value != 3200 {
+		t.Fatalf("expected decimal face value to round up to 3200, got %d", value)
 	}
 }
 
