@@ -5,12 +5,14 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -28,6 +30,10 @@ type paypalClient struct {
 	secret    string
 	webhookID string
 	client    *http.Client
+
+	tokenMu               sync.Mutex
+	cachedAccessToken     string
+	cachedAccessTokenTill time.Time
 }
 
 type payPalCreateCheckoutInput struct {
@@ -35,6 +41,7 @@ type payPalCreateCheckoutInput struct {
 	OrderNumber  string
 	Amount       int64
 	CurrencyCode string
+	BrandName    string
 	Description  string
 	ItemName     string
 	ItemSummary  string
@@ -84,6 +91,30 @@ type payPalAmount struct {
 	Value        string `json:"value"`
 }
 
+type payPalAPIError struct {
+	Method     string
+	Path       string
+	StatusCode int
+	Name       string
+	Message    string
+	DebugID    string
+	Details    []payPalAPIErrorDetail
+	RawBody    string
+}
+
+type payPalAPIErrorDetail struct {
+	Issue       string `json:"issue"`
+	Description string `json:"description"`
+}
+
+func (e *payPalAPIError) Error() string {
+	if e == nil {
+		return ""
+	}
+
+	return fmt.Sprintf("payments: paypal request %s %s failed with status %d: %s", e.Method, e.Path, e.StatusCode, strings.TrimSpace(e.RawBody))
+}
+
 func newPayPalClient(options payPalClientOptions) *paypalClient {
 	httpClient := options.HTTPClient
 	if httpClient == nil {
@@ -100,11 +131,6 @@ func newPayPalClient(options payPalClientOptions) *paypalClient {
 }
 
 func (c *paypalClient) CreateCheckout(ctx context.Context, input payPalCreateCheckoutInput) (payPalCheckout, error) {
-	accessToken, err := c.fetchAccessToken(ctx)
-	if err != nil {
-		return payPalCheckout{}, err
-	}
-
 	amountPayload := map[string]any{
 		"currency_code": defaultCurrency(input.CurrencyCode, "ILS"),
 		"value":         formatMinorUnits(input.Amount),
@@ -158,6 +184,10 @@ func (c *paypalClient) CreateCheckout(ctx context.Context, input payPalCreateChe
 			},
 		},
 	}
+	experienceContext := payload["payment_source"].(map[string]any)["paypal"].(map[string]any)["experience_context"].(map[string]any)
+	if brandName := truncateText(input.BrandName, 127); brandName != "" {
+		experienceContext["brand_name"] = brandName
+	}
 
 	var response struct {
 		ID    string `json:"id"`
@@ -168,7 +198,7 @@ func (c *paypalClient) CreateCheckout(ctx context.Context, input payPalCreateChe
 		} `json:"links"`
 	}
 
-	if err := c.doJSON(ctx, http.MethodPost, "/v2/checkout/orders", accessToken, payload, &response); err != nil {
+	if err := c.doAuthedJSON(ctx, http.MethodPost, "/v2/checkout/orders", payload, &response); err != nil {
 		return payPalCheckout{}, err
 	}
 
@@ -229,14 +259,12 @@ func (c *paypalClient) VerifyAndParseWebhook(ctx context.Context, headers http.H
 		return payPalWebhookEvent{}, fmt.Errorf("%w: missing paypal webhook id", ErrWebhookUnauthorized)
 	}
 
-	var rawEvent map[string]any
-	if err := json.Unmarshal(body, &rawEvent); err != nil {
-		return payPalWebhookEvent{}, err
+	if missingHeaders := missingPayPalWebhookHeaders(headers); len(missingHeaders) > 0 {
+		return payPalWebhookEvent{}, fmt.Errorf("%w: missing headers %s", ErrWebhookUnauthorized, strings.Join(missingHeaders, ", "))
 	}
 
-	accessToken, err := c.fetchAccessToken(ctx)
-	if err != nil {
-		return payPalWebhookEvent{}, err
+	if !json.Valid(body) {
+		return payPalWebhookEvent{}, fmt.Errorf("payments: invalid paypal webhook payload")
 	}
 
 	verifyRequest := map[string]any{
@@ -246,19 +274,23 @@ func (c *paypalClient) VerifyAndParseWebhook(ctx context.Context, headers http.H
 		"transmission_sig":  headers.Get("PAYPAL-TRANSMISSION-SIG"),
 		"transmission_time": headers.Get("PAYPAL-TRANSMISSION-TIME"),
 		"webhook_id":        c.webhookID,
-		"webhook_event":     rawEvent,
+		"webhook_event":     json.RawMessage(body),
 	}
 
 	var verifyResponse struct {
 		VerificationStatus string `json:"verification_status"`
 	}
 
-	if err := c.doJSON(ctx, http.MethodPost, "/v1/notifications/verify-webhook-signature", accessToken, verifyRequest, &verifyResponse); err != nil {
+	if err := c.doAuthedJSON(ctx, http.MethodPost, "/v1/notifications/verify-webhook-signature", verifyRequest, &verifyResponse); err != nil {
 		return payPalWebhookEvent{}, err
 	}
 
 	if verifyResponse.VerificationStatus != "SUCCESS" {
-		return payPalWebhookEvent{}, ErrWebhookUnauthorized
+		status := strings.TrimSpace(verifyResponse.VerificationStatus)
+		if status == "" {
+			status = "EMPTY"
+		}
+		return payPalWebhookEvent{}, fmt.Errorf("%w: paypal verification_status=%s", ErrWebhookUnauthorized, status)
 	}
 
 	var event payPalWebhookEvent
@@ -269,12 +301,41 @@ func (c *paypalClient) VerifyAndParseWebhook(ctx context.Context, headers http.H
 	return event, nil
 }
 
-func (c *paypalClient) CaptureOrder(ctx context.Context, orderID string) (payPalCapture, error) {
-	accessToken, err := c.fetchAccessToken(ctx)
-	if err != nil {
-		return payPalCapture{}, err
+func missingPayPalWebhookHeaders(headers http.Header) []string {
+	requiredHeaders := []string{
+		"PAYPAL-AUTH-ALGO",
+		"PAYPAL-CERT-URL",
+		"PAYPAL-TRANSMISSION-ID",
+		"PAYPAL-TRANSMISSION-SIG",
+		"PAYPAL-TRANSMISSION-TIME",
 	}
 
+	missing := make([]string, 0, len(requiredHeaders))
+	for _, header := range requiredHeaders {
+		if strings.TrimSpace(headers.Get(header)) == "" {
+			missing = append(missing, header)
+		}
+	}
+
+	return missing
+}
+
+func isPayPalOrderAlreadyCapturedError(err error) bool {
+	var apiErr *payPalAPIError
+	if !errors.As(err, &apiErr) {
+		return false
+	}
+
+	for _, detail := range apiErr.Details {
+		if strings.EqualFold(strings.TrimSpace(detail.Issue), "ORDER_ALREADY_CAPTURED") {
+			return true
+		}
+	}
+
+	return false
+}
+
+func (c *paypalClient) CaptureOrder(ctx context.Context, orderID string) (payPalCapture, error) {
 	path := "/v2/checkout/orders/" + url.PathEscape(orderID) + "/capture"
 	var response struct {
 		ID            string `json:"id"`
@@ -290,7 +351,7 @@ func (c *paypalClient) CaptureOrder(ctx context.Context, orderID string) (payPal
 		} `json:"purchase_units"`
 	}
 
-	if err := c.doJSON(ctx, http.MethodPost, path, accessToken, map[string]any{}, &response); err != nil {
+	if err := c.doAuthedJSON(ctx, http.MethodPost, path, map[string]any{}, &response); err != nil {
 		return payPalCapture{}, err
 	}
 
@@ -314,11 +375,6 @@ func (c *paypalClient) CaptureOrder(ctx context.Context, orderID string) (payPal
 }
 
 func (c *paypalClient) GetOrder(ctx context.Context, orderID string) (payPalOrderSnapshot, error) {
-	accessToken, err := c.fetchAccessToken(ctx)
-	if err != nil {
-		return payPalOrderSnapshot{}, err
-	}
-
 	path := "/v2/checkout/orders/" + url.PathEscape(orderID)
 	var response struct {
 		ID            string `json:"id"`
@@ -335,7 +391,7 @@ func (c *paypalClient) GetOrder(ctx context.Context, orderID string) (payPalOrde
 		} `json:"purchase_units"`
 	}
 
-	if err := c.doJSON(ctx, http.MethodGet, path, accessToken, nil, &response); err != nil {
+	if err := c.doAuthedJSON(ctx, http.MethodGet, path, nil, &response); err != nil {
 		return payPalOrderSnapshot{}, err
 	}
 
@@ -374,6 +430,14 @@ func (c *paypalClient) GetOrder(ctx context.Context, orderID string) (payPalOrde
 }
 
 func (c *paypalClient) fetchAccessToken(ctx context.Context) (string, error) {
+	c.tokenMu.Lock()
+	if strings.TrimSpace(c.cachedAccessToken) != "" && time.Now().UTC().Before(c.cachedAccessTokenTill) {
+		token := c.cachedAccessToken
+		c.tokenMu.Unlock()
+		return token, nil
+	}
+	c.tokenMu.Unlock()
+
 	form := url.Values{}
 	form.Set("grant_type", "client_credentials")
 
@@ -400,6 +464,7 @@ func (c *paypalClient) fetchAccessToken(ctx context.Context) (string, error) {
 
 	var response struct {
 		AccessToken string `json:"access_token"`
+		ExpiresIn   int64  `json:"expires_in"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
 		return "", err
@@ -408,7 +473,45 @@ func (c *paypalClient) fetchAccessToken(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("payments: paypal oauth response missing access token")
 	}
 
+	tokenExpiry := time.Now().UTC().Add(time.Duration(response.ExpiresIn) * time.Second).Add(-60 * time.Second)
+	if response.ExpiresIn <= 0 {
+		tokenExpiry = time.Now().UTC().Add(5 * time.Minute)
+	}
+
+	c.tokenMu.Lock()
+	c.cachedAccessToken = strings.TrimSpace(response.AccessToken)
+	c.cachedAccessTokenTill = tokenExpiry
+	c.tokenMu.Unlock()
+
 	return response.AccessToken, nil
+}
+
+func (c *paypalClient) clearAccessTokenCache() {
+	c.tokenMu.Lock()
+	defer c.tokenMu.Unlock()
+
+	c.cachedAccessToken = ""
+	c.cachedAccessTokenTill = time.Time{}
+}
+
+func (c *paypalClient) doAuthedJSON(ctx context.Context, method string, path string, payload any, target any) error {
+	accessToken, err := c.fetchAccessToken(ctx)
+	if err != nil {
+		return err
+	}
+
+	err = c.doJSON(ctx, method, path, accessToken, payload, target)
+	if !isPayPalUnauthorizedError(err) {
+		return err
+	}
+
+	c.clearAccessTokenCache()
+	accessToken, err = c.fetchAccessToken(ctx)
+	if err != nil {
+		return err
+	}
+
+	return c.doJSON(ctx, method, path, accessToken, payload, target)
 }
 
 func (c *paypalClient) doJSON(ctx context.Context, method string, path string, accessToken string, payload any, target any) error {
@@ -440,7 +543,7 @@ func (c *paypalClient) doJSON(ctx context.Context, method string, path string, a
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		responseBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return fmt.Errorf("payments: paypal request %s %s failed with status %d: %s", method, path, resp.StatusCode, strings.TrimSpace(string(responseBody)))
+		return buildPayPalAPIError(method, path, resp.StatusCode, responseBody)
 	}
 
 	if target == nil {
@@ -448,6 +551,35 @@ func (c *paypalClient) doJSON(ctx context.Context, method string, path string, a
 	}
 
 	return json.NewDecoder(resp.Body).Decode(target)
+}
+
+func buildPayPalAPIError(method string, path string, statusCode int, responseBody []byte) error {
+	apiErr := &payPalAPIError{
+		Method:     method,
+		Path:       path,
+		StatusCode: statusCode,
+		RawBody:    strings.TrimSpace(string(responseBody)),
+	}
+
+	var payload struct {
+		Name    string                 `json:"name"`
+		Message string                 `json:"message"`
+		DebugID string                 `json:"debug_id"`
+		Details []payPalAPIErrorDetail `json:"details"`
+	}
+	if err := json.Unmarshal(responseBody, &payload); err == nil {
+		apiErr.Name = payload.Name
+		apiErr.Message = payload.Message
+		apiErr.DebugID = payload.DebugID
+		apiErr.Details = payload.Details
+	}
+
+	return apiErr
+}
+
+func isPayPalUnauthorizedError(err error) bool {
+	var apiErr *payPalAPIError
+	return errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusUnauthorized
 }
 
 func (e payPalWebhookEvent) OrderID() string {

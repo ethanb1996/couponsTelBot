@@ -11,6 +11,7 @@ import (
 
 type PaymentReconciler interface {
 	ReconcilePendingOrder(ctx context.Context, candidate store.PendingPaymentReconciliationCandidate) error
+	ProcessFulfillmentJob(ctx context.Context, job store.FulfillmentJob) error
 }
 
 type Runner struct {
@@ -22,6 +23,7 @@ type Runner struct {
 	reconcileAfter     time.Duration
 	checkoutHoldAfter  time.Duration
 	batchSize          int
+	fulfillmentWakeCh  chan int64
 }
 
 func NewRunner(logger *slog.Logger, repo *store.Postgres, reconciler PaymentReconciler, sweepInterval time.Duration, deliveryAlertAfter time.Duration, reconcileAfter time.Duration, checkoutHoldAfter time.Duration, batchSize int) *Runner {
@@ -34,6 +36,7 @@ func NewRunner(logger *slog.Logger, repo *store.Postgres, reconciler PaymentReco
 		reconcileAfter:     reconcileAfter,
 		checkoutHoldAfter:  checkoutHoldAfter,
 		batchSize:          batchSize,
+		fulfillmentWakeCh:  make(chan int64, max(64, batchSize*2)),
 	}
 }
 
@@ -43,6 +46,18 @@ func (r *Runner) Start(ctx context.Context) {
 	}
 
 	go r.loop(ctx)
+	go r.fulfillmentLoop(ctx)
+}
+
+func (r *Runner) NotifyFulfillment(orderID int64) {
+	if r == nil || orderID == 0 {
+		return
+	}
+
+	select {
+	case r.fulfillmentWakeCh <- orderID:
+	default:
+	}
 }
 
 func (r *Runner) loop(ctx context.Context) {
@@ -57,6 +72,24 @@ func (r *Runner) loop(ctx context.Context) {
 			return
 		case <-ticker.C:
 			r.runOnce(ctx)
+		}
+	}
+}
+
+func (r *Runner) fulfillmentLoop(ctx context.Context) {
+	r.runFulfillmentJobs(ctx)
+
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			r.runFulfillmentJobs(ctx)
+		case <-r.fulfillmentWakeCh:
+			r.runFulfillmentJobs(ctx)
 		}
 	}
 }
@@ -165,6 +198,36 @@ func (r *Runner) runPaymentReconciliation(ctx context.Context) {
 	}
 }
 
+func (r *Runner) runFulfillmentJobs(parent context.Context) {
+	ctx, cancel := context.WithTimeout(parent, 30*time.Second)
+	defer cancel()
+
+	jobs, err := r.store.ClaimDueFulfillmentJobs(ctx, r.batchSize)
+	if err != nil {
+		r.logger.Error("failed to claim fulfillment jobs", "error", err)
+		return
+	}
+
+	for _, job := range jobs {
+		if err := r.reconciler.ProcessFulfillmentJob(ctx, job); err != nil {
+			r.logger.Error("fulfillment job processing failed",
+				"job_id", job.ID,
+				"order_id", job.OrderID,
+				"provider_checkout_reference", job.ProviderCheckoutReference,
+				"attempt_count", job.AttemptCount,
+				"error", err,
+			)
+		}
+	}
+}
+
 func int64Ptr(value int64) *int64 {
 	return &value
+}
+
+func max(a int, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }

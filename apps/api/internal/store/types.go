@@ -124,6 +124,27 @@ type CouponDelivery struct {
 	UpdatedAt           time.Time
 }
 
+type FulfillmentJob struct {
+	ID                        int64
+	OrderID                   int64
+	ProviderCheckoutReference string
+	Status                    string
+	AttemptCount              int
+	NextAttemptAt             time.Time
+	LastStep                  string
+	LastError                 string
+	LockedAt                  *time.Time
+	CreatedAt                 time.Time
+	UpdatedAt                 time.Time
+}
+
+type FulfillmentPreparation struct {
+	Order    Order
+	Coupon   *Coupon
+	User     *User
+	Delivery *CouponDelivery
+}
+
 type SupportCase struct {
 	ID              int64
 	UserID          *int64
@@ -312,4 +333,28 @@ type EnsureSupportCaseParams struct {
 	Priority        string
 	Summary         string
 	AssignedAdminID string
+}
+
+type EnqueueFulfillmentJobParams struct {
+	OrderID                   int64
+	ProviderCheckoutReference string
+	LastStep                  string
+}
+
+type RescheduleFulfillmentJobParams struct {
+	JobID         int64
+	NextAttemptAt time.Time
+	LastStep      string
+	LastError     string
+}
+
+type FailFulfillmentJobParams struct {
+	JobID     int64
+	LastStep  string
+	LastError string
+}
+
+type SucceedFulfillmentJobParams struct {
+	JobID    int64
+	LastStep string
 }

@@ -40,6 +40,12 @@ const (
 	deliveryStatusSent      = "sent"
 	deliveryStatusConfirmed = "confirmed"
 	deliveryStatusFailed    = "failed"
+
+	fulfillmentJobStatusPending        = "pending"
+	fulfillmentJobStatusProcessing     = "processing"
+	fulfillmentJobStatusRetryScheduled = "retry_scheduled"
+	fulfillmentJobStatusSucceeded      = "succeeded"
+	fulfillmentJobStatusFailedTerminal = "failed_terminal"
 )
 
 var (
@@ -377,15 +383,12 @@ func (p *Postgres) CreateDraftOrder(ctx context.Context, params CreateDraftOrder
 		_ = tx.Rollback(ctx)
 	}()
 
-	listing, availableCount, err := p.loadListingAvailabilityForUpdate(ctx, tx, params.ListingID)
+	listing, err := loadListingForCheckout(ctx, tx, params.ListingID)
 	if err != nil {
 		return Order{}, err
 	}
 	if listing.Status != listingStatusActive {
 		return Order{}, ErrListingInactive
-	}
-	if availableCount == 0 {
-		return Order{}, ErrListingSoldOut
 	}
 
 	coupon, err := reserveAvailableCoupon(ctx, tx, listing.ID)
@@ -744,38 +747,72 @@ func (p *Postgres) GetCoupon(ctx context.Context, couponID int64) (Coupon, error
 }
 
 func (p *Postgres) PrepareReservedCouponForDelivery(ctx context.Context, orderID int64) (Coupon, error) {
-	if err := p.ensurePool(); err != nil {
+	preparation, err := p.PrepareFulfillment(ctx, orderID)
+	if err != nil {
 		return Coupon{}, err
 	}
+	if preparation.Coupon == nil {
+		return Coupon{}, ErrReservedCouponRequired
+	}
+
+	return *preparation.Coupon, nil
+}
+
+func (p *Postgres) PrepareFulfillment(ctx context.Context, orderID int64) (FulfillmentPreparation, error) {
+	if err := p.ensurePool(); err != nil {
+		return FulfillmentPreparation{}, err
+	}
 	if orderID == 0 {
-		return Coupon{}, fmt.Errorf("%w: order id is required", ErrInvalidArgument)
+		return FulfillmentPreparation{}, fmt.Errorf("%w: order id is required", ErrInvalidArgument)
 	}
 
 	tx, err := p.Pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
-		return Coupon{}, err
+		return FulfillmentPreparation{}, err
 	}
 	defer func() {
 		_ = tx.Rollback(ctx)
 	}()
 
+	preparation := FulfillmentPreparation{}
+
 	order, err := loadOrderForUpdate(ctx, tx, orderID)
 	if err != nil {
-		return Coupon{}, err
+		return FulfillmentPreparation{}, err
 	}
+	preparation.Order = order
+
+	delivery, err := loadCouponDeliveryForOrder(ctx, tx, order.ID)
+	if err != nil {
+		return FulfillmentPreparation{}, err
+	}
+	preparation.Delivery = delivery
+	if delivery != nil && (delivery.Status == deliveryStatusSent || delivery.Status == deliveryStatusConfirmed) {
+		if err := tx.Commit(ctx); err != nil {
+			return FulfillmentPreparation{}, err
+		}
+		return preparation, nil
+	}
+	if order.Status == orderStatusDelivered {
+		if err := tx.Commit(ctx); err != nil {
+			return FulfillmentPreparation{}, err
+		}
+		return preparation, nil
+	}
+
 	if order.CouponID == nil {
-		return Coupon{}, ErrReservedCouponRequired
+		return preparation, ErrReservedCouponRequired
 	}
 	if order.Status != orderStatusPaid && order.Status != orderStatusDeliveryPending && order.Status != orderStatusDelivered {
-		return Coupon{}, ErrOrderNotReadyForCoupon
+		return preparation, ErrOrderNotReadyForCoupon
 	}
 
 	hasSuccessfulPayment, err := orderHasSuccessfulPayment(ctx, tx, order.ID)
 	if err != nil {
-		return Coupon{}, err
+		return FulfillmentPreparation{}, err
 	}
 	if !hasSuccessfulPayment {
-		return Coupon{}, ErrPaymentRequired
+		return preparation, ErrPaymentRequired
 	}
 
 	row := tx.QueryRow(ctx, `
@@ -807,11 +844,12 @@ func (p *Postgres) PrepareReservedCouponForDelivery(ctx context.Context, orderID
 
 	coupon, err := scanCoupon(row)
 	if err != nil {
-		return Coupon{}, mapStoreErr(err)
+		return FulfillmentPreparation{}, mapStoreErr(err)
 	}
+	preparation.Coupon = &coupon
 
 	if !coupon.ExpiryAt.After(time.Now().UTC()) {
-		return Coupon{}, ErrReservedCouponInvalid
+		return preparation, ErrReservedCouponInvalid
 	}
 
 	switch coupon.InventoryStatus {
@@ -842,16 +880,17 @@ func (p *Postgres) PrepareReservedCouponForDelivery(ctx context.Context, orderID
 				acquired_cost_amount,
 				acquired_at,
 				created_at,
-				updated_at
+			updated_at
 		`, coupon.ID)
 		coupon, err = scanCoupon(row)
 		if err != nil {
-			return Coupon{}, mapStoreErr(err)
+			return FulfillmentPreparation{}, mapStoreErr(err)
 		}
+		preparation.Coupon = &coupon
 	case inventoryStatusAssigned, inventoryStatusDelivered:
 		// Keep the already-linked coupon for idempotent delivery handling.
 	default:
-		return Coupon{}, ErrReservedCouponInvalid
+		return preparation, ErrReservedCouponInvalid
 	}
 
 	_, err = tx.Exec(ctx, `
@@ -865,14 +904,39 @@ func (p *Postgres) PrepareReservedCouponForDelivery(ctx context.Context, orderID
 		WHERE id = $1
 	`, order.ID)
 	if err != nil {
-		return Coupon{}, err
+		return FulfillmentPreparation{}, err
 	}
+	if order.Status == orderStatusPaid {
+		order.Status = orderStatusDeliveryPending
+	}
+	preparation.Order = order
+
+	userRow := tx.QueryRow(ctx, `
+		SELECT
+			id,
+			telegram_user_id,
+			telegram_username,
+			display_name,
+			language_code,
+			status,
+			first_seen_at,
+			last_seen_at,
+			created_at,
+			updated_at
+		FROM users
+		WHERE id = $1
+	`, order.UserID)
+	user, err := scanUser(userRow)
+	if err != nil {
+		return FulfillmentPreparation{}, mapStoreErr(err)
+	}
+	preparation.User = &user
 
 	if err := tx.Commit(ctx); err != nil {
-		return Coupon{}, err
+		return FulfillmentPreparation{}, err
 	}
 
-	return coupon, nil
+	return preparation, nil
 }
 
 func (p *Postgres) AssignAvailableCoupon(ctx context.Context, orderID int64) (Coupon, error) {
@@ -1164,7 +1228,7 @@ func (p *Postgres) ensurePool() error {
 	return nil
 }
 
-func (p *Postgres) loadListingAvailabilityForUpdate(ctx context.Context, tx pgx.Tx, listingID int64) (Listing, int64, error) {
+func loadListingForCheckout(ctx context.Context, tx pgx.Tx, listingID int64) (Listing, error) {
 	row := tx.QueryRow(ctx, `
 		SELECT
 			id,
@@ -1185,21 +1249,12 @@ func (p *Postgres) loadListingAvailabilityForUpdate(ctx context.Context, tx pgx.
 			created_by_admin_id,
 			published_at,
 			created_at,
-			updated_at,
-			(
-				SELECT COUNT(*)
-				FROM coupons c
-				WHERE c.listing_id = listings.id
-					AND c.inventory_status = 'available'
-					AND c.expiry_at > NOW()
-			) AS available_inventory_count
+			updated_at
 		FROM listings
 		WHERE id = $1
-		FOR UPDATE
 	`, listingID)
 
 	var listing Listing
-	var availableInventoryCount int64
 	err := row.Scan(
 		&listing.ID,
 		&listing.MerchantName,
@@ -1220,16 +1275,15 @@ func (p *Postgres) loadListingAvailabilityForUpdate(ctx context.Context, tx pgx.
 		&listing.PublishedAt,
 		&listing.CreatedAt,
 		&listing.UpdatedAt,
-		&availableInventoryCount,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return Listing{}, 0, ErrNotFound
+			return Listing{}, ErrNotFound
 		}
-		return Listing{}, 0, err
+		return Listing{}, err
 	}
 
-	return listing, availableInventoryCount, nil
+	return listing, nil
 }
 
 func reserveAvailableCoupon(ctx context.Context, tx pgx.Tx, listingID int64) (Coupon, error) {
@@ -1332,27 +1386,53 @@ func orderHasSuccessfulPayment(ctx context.Context, tx pgx.Tx, orderID int64) (b
 	return ok, err
 }
 
-func upsertPayment(ctx context.Context, tx pgx.Tx, params RecordPaymentEventParams) (Payment, error) {
-	existing, found, err := findPaymentForUpdate(ctx, tx, params)
+func loadCouponDeliveryForOrder(ctx context.Context, tx pgx.Tx, orderID int64) (*CouponDelivery, error) {
+	row := tx.QueryRow(ctx, `
+		SELECT
+			id,
+			order_id,
+			coupon_id,
+			delivery_channel,
+			status,
+			telegram_message_id,
+			delivery_payload_hash,
+			sent_at,
+			confirmed_at,
+			failure_reason,
+			created_at,
+			updated_at
+		FROM coupon_deliveries
+		WHERE order_id = $1
+	`, orderID)
+
+	delivery, err := scanCouponDelivery(row)
 	if err != nil {
-		return Payment{}, err
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
 	}
 
-	if found {
+	return &delivery, nil
+}
+
+func upsertPayment(ctx context.Context, tx pgx.Tx, params RecordPaymentEventParams) (Payment, error) {
+	if strings.TrimSpace(params.ProviderPaymentID) != "" && strings.TrimSpace(params.ProviderCheckoutID) != "" {
 		row := tx.QueryRow(ctx, `
 			UPDATE payments
 			SET
-				order_id = $2,
-				provider_payment_id = $3,
-				provider_checkout_id = $4,
-				status = $5,
-				amount = $6,
-				currency_code = $7,
-				failure_code = $8,
-				failure_message = $9,
-				captured_at = $10,
+				order_id = $3,
+				provider_payment_id = $4,
+				provider_checkout_id = $5,
+				status = $6,
+				amount = $7,
+				currency_code = $8,
+				failure_code = $9,
+				failure_message = $10,
+				captured_at = $11,
 				updated_at = NOW()
-			WHERE id = $1
+			WHERE provider_name = $1
+				AND provider_checkout_id = $2
 			RETURNING
 				id,
 				order_id,
@@ -1368,7 +1448,8 @@ func upsertPayment(ctx context.Context, tx pgx.Tx, params RecordPaymentEventPara
 				created_at,
 				updated_at
 		`,
-			existing.ID,
+			params.ProviderName,
+			params.ProviderCheckoutID,
 			params.OrderID,
 			params.ProviderPaymentID,
 			params.ProviderCheckoutID,
@@ -1381,13 +1462,22 @@ func upsertPayment(ctx context.Context, tx pgx.Tx, params RecordPaymentEventPara
 		)
 
 		payment, err := scanPayment(row)
-		if err != nil {
+		if err == nil {
+			return payment, nil
+		}
+		if !errors.Is(err, pgx.ErrNoRows) {
 			return Payment{}, err
 		}
-		return payment, nil
 	}
 
-	row := tx.QueryRow(ctx, `
+	conflictTarget := "(provider_name, provider_checkout_id) WHERE provider_checkout_id <> ''"
+	conflictValue := params.ProviderCheckoutID
+	if strings.TrimSpace(params.ProviderPaymentID) != "" {
+		conflictTarget = "(provider_name, provider_payment_id) WHERE provider_payment_id <> ''"
+		conflictValue = params.ProviderPaymentID
+	}
+
+	row := tx.QueryRow(ctx, fmt.Sprintf(`
 		INSERT INTO payments (
 			order_id,
 			provider_name,
@@ -1400,6 +1490,18 @@ func upsertPayment(ctx context.Context, tx pgx.Tx, params RecordPaymentEventPara
 			failure_message,
 			captured_at
 		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+		ON CONFLICT %s DO UPDATE
+		SET
+			order_id = EXCLUDED.order_id,
+			provider_payment_id = EXCLUDED.provider_payment_id,
+			provider_checkout_id = EXCLUDED.provider_checkout_id,
+			status = EXCLUDED.status,
+			amount = EXCLUDED.amount,
+			currency_code = EXCLUDED.currency_code,
+			failure_code = EXCLUDED.failure_code,
+			failure_message = EXCLUDED.failure_message,
+			captured_at = EXCLUDED.captured_at,
+			updated_at = NOW()
 		RETURNING
 			id,
 			order_id,
@@ -1414,11 +1516,11 @@ func upsertPayment(ctx context.Context, tx pgx.Tx, params RecordPaymentEventPara
 			captured_at,
 			created_at,
 			updated_at
-	`,
+	`, conflictTarget),
 		params.OrderID,
 		params.ProviderName,
-		params.ProviderPaymentID,
-		params.ProviderCheckoutID,
+		defaultString(params.ProviderPaymentID, ""),
+		defaultString(params.ProviderCheckoutID, ""),
 		params.Status,
 		params.Amount,
 		defaultString(params.CurrencyCode, "ILS"),
@@ -1428,132 +1530,11 @@ func upsertPayment(ctx context.Context, tx pgx.Tx, params RecordPaymentEventPara
 	)
 
 	payment, err := scanPayment(row)
-	if err == nil {
-		return payment, nil
-	}
-	if !isUniqueViolation(err) {
-		return Payment{}, err
-	}
-
-	existing, found, err = findPaymentForUpdate(ctx, tx, params)
 	if err != nil {
-		return Payment{}, err
-	}
-	if !found {
-		return Payment{}, err
-	}
-
-	row = tx.QueryRow(ctx, `
-		UPDATE payments
-		SET
-			order_id = $2,
-			provider_payment_id = $3,
-			provider_checkout_id = $4,
-			status = $5,
-			amount = $6,
-			currency_code = $7,
-			failure_code = $8,
-			failure_message = $9,
-			captured_at = $10,
-			updated_at = NOW()
-		WHERE id = $1
-		RETURNING
-			id,
-			order_id,
-			provider_name,
-			provider_payment_id,
-			provider_checkout_id,
-			status,
-			amount,
-			currency_code,
-			failure_code,
-			failure_message,
-			captured_at,
-			created_at,
-			updated_at
-	`,
-		existing.ID,
-		params.OrderID,
-		params.ProviderPaymentID,
-		params.ProviderCheckoutID,
-		params.Status,
-		params.Amount,
-		defaultString(params.CurrencyCode, "ILS"),
-		params.FailureCode,
-		params.FailureMessage,
-		params.CapturedAt,
-	)
-
-	payment, err = scanPayment(row)
-	if err != nil {
-		return Payment{}, err
+		return Payment{}, fmt.Errorf("upsert payment using conflict key %q: %w", conflictValue, err)
 	}
 
 	return payment, nil
-}
-
-func findPaymentForUpdate(ctx context.Context, tx pgx.Tx, params RecordPaymentEventParams) (Payment, bool, error) {
-	if strings.TrimSpace(params.ProviderPaymentID) != "" {
-		row := tx.QueryRow(ctx, `
-			SELECT
-				id,
-				order_id,
-				provider_name,
-				provider_payment_id,
-				provider_checkout_id,
-				status,
-				amount,
-				currency_code,
-				failure_code,
-				failure_message,
-				captured_at,
-				created_at,
-				updated_at
-			FROM payments
-			WHERE provider_name = $1 AND provider_payment_id = $2
-			FOR UPDATE
-		`, params.ProviderName, params.ProviderPaymentID)
-
-		payment, err := scanPayment(row)
-		if err == nil {
-			return payment, true, nil
-		}
-		if !errors.Is(err, pgx.ErrNoRows) {
-			return Payment{}, false, err
-		}
-	}
-
-	if strings.TrimSpace(params.ProviderCheckoutID) != "" {
-		row := tx.QueryRow(ctx, `
-			SELECT
-				id,
-				order_id,
-				provider_name,
-				provider_payment_id,
-				provider_checkout_id,
-				status,
-				amount,
-				currency_code,
-				failure_code,
-				failure_message,
-				captured_at,
-				created_at,
-				updated_at
-			FROM payments
-			WHERE provider_name = $1 AND provider_checkout_id = $2
-			FOR UPDATE
-		`, params.ProviderName, params.ProviderCheckoutID)
-
-		payment, err := scanPayment(row)
-		if err == nil {
-			return payment, true, nil
-		}
-		if !errors.Is(err, pgx.ErrNoRows) {
-			return Payment{}, false, err
-		}
-	}
-
-	return Payment{}, false, nil
 }
 
 func deliveryOutcome(delivery CouponDelivery) (string, string, *time.Time) {
@@ -1773,37 +1754,7 @@ func (p *Postgres) GetOrCreateUser(ctx context.Context, telegramUserID int64, di
 		return User{}, fmt.Errorf("%w: telegram user id is required", ErrInvalidArgument)
 	}
 
-	// First try to find existing user
 	row := p.Pool.QueryRow(ctx, `
-		SELECT
-			id,
-			telegram_user_id,
-			telegram_username,
-			display_name,
-			language_code,
-			status,
-			first_seen_at,
-			last_seen_at,
-			created_at,
-			updated_at
-		FROM users
-		WHERE telegram_user_id = $1
-	`, telegramUserID)
-
-	user, err := scanUser(row)
-	if err == nil {
-		// User exists, update last_seen_at
-		_, _ = p.Pool.Exec(ctx, `UPDATE users SET last_seen_at = NOW() WHERE id = $1`, user.ID)
-		user.LastSeenAt = time.Now().UTC()
-		return user, nil
-	}
-
-	if !isNotFoundErr(err) {
-		return User{}, err
-	}
-
-	// User doesn't exist, create new one
-	newRow := p.Pool.QueryRow(ctx, `
 		INSERT INTO users (
 			telegram_user_id,
 			telegram_username,
@@ -1813,6 +1764,13 @@ func (p *Postgres) GetOrCreateUser(ctx context.Context, telegramUserID int64, di
 			first_seen_at,
 			last_seen_at
 		) VALUES ($1, $2, $3, $4, 'active', NOW(), NOW())
+		ON CONFLICT (telegram_user_id) DO UPDATE
+		SET
+			telegram_username = EXCLUDED.telegram_username,
+			display_name = EXCLUDED.display_name,
+			language_code = EXCLUDED.language_code,
+			last_seen_at = NOW(),
+			updated_at = NOW()
 		RETURNING
 			id,
 			telegram_user_id,
@@ -1831,7 +1789,7 @@ func (p *Postgres) GetOrCreateUser(ctx context.Context, telegramUserID int64, di
 		languageCode,
 	)
 
-	return scanUser(newRow)
+	return scanUser(row)
 }
 
 func (p *Postgres) GetUserByID(ctx context.Context, userID int64) (User, error) {

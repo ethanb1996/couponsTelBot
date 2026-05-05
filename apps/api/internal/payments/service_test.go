@@ -7,156 +7,143 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/ethanb1996/couponsTelBot/apps/api/internal/store"
 )
 
-func TestProcessCaptureDeliversOnlyOnceAcrossDuplicateWebhooks(t *testing.T) {
+func TestHandleWebhookApprovedOrderEnqueuesFulfillmentJob(t *testing.T) {
 	t.Parallel()
-
-	testKey := "1234567890abcdef1234567890abcdef"
-	ciphertext, nonce := encryptTestCouponCode(t, testKey, "CODE-1234")
 
 	mockStore := &mockPaymentStore{
 		order: store.Order{
 			ID:                        101,
-			UserID:                    7,
-			ListingID:                 88,
 			OrderNumber:               "ORD-101",
-			Status:                    "pending_payment",
-			CouponID:                  int64Ptr(501),
-			CurrencyCode:              "ILS",
-			SalePriceAmount:           2599,
 			ProviderCheckoutReference: "checkout-101",
-			FinalSaleAcknowledgedAt:   timePtr(time.Date(2026, time.April, 23, 9, 0, 0, 0, time.UTC)),
-		},
-		user: store.User{ID: 7, TelegramUserID: 777, DisplayName: "Buyer"},
-		listing: store.Listing{
-			ID:                     88,
-			MerchantName:           "Coffee Shop",
-			Title:                  "ILS 50 coupon",
-			RedemptionInstructions: "Show the code at checkout.",
-		},
-		coupon: store.Coupon{
-			ID:                   501,
-			ListingID:            88,
-			CouponCodeCiphertext: ciphertext,
-			CouponCodeNonce:      nonce,
-			CouponMaskedDisplay:  "***1234",
-			ExpiryAt:             time.Date(2026, time.December, 31, 0, 0, 0, 0, time.UTC),
 		},
 	}
-	deliverer := &stubDeliverer{}
+	notifier := &stubFulfillmentNotifier{}
+
+	var event payPalWebhookEvent
+	event.ID = "WH-101"
+	event.EventType = "CHECKOUT.ORDER.APPROVED"
+	event.Resource.ID = "checkout-101"
 
 	service := &Service{
 		logger:              slog.New(slog.NewTextHandler(io.Discard, nil)),
 		store:               mockStore,
-		deliverer:           deliverer,
 		providerName:        "paypal",
-		couponEncryptionKey: testKey,
+		paypal:              &stubPayPalGateway{verifyWebhookEvent: event},
+		fulfillmentNotifier: notifier,
 	}
 
-	ctx := context.Background()
-	if err := service.processCapture(ctx, "checkout-101", "capture-1", "captured", 2599, "ILS"); err != nil {
-		t.Fatalf("first capture failed: %v", err)
-	}
-	if err := service.processCapture(ctx, "checkout-101", "capture-1", "captured", 2599, "ILS"); err != nil {
-		t.Fatalf("duplicate capture failed: %v", err)
+	if err := service.HandleWebhook(context.Background(), "paypal", http.Header{}, []byte(`{}`)); err != nil {
+		t.Fatalf("expected webhook handling to succeed, got %v", err)
 	}
 
-	if deliverer.sendCount != 1 {
-		t.Fatalf("expected one delivery send, got %d", deliverer.sendCount)
+	if len(mockStore.enqueuedJobs) != 1 {
+		t.Fatalf("expected one fulfillment job enqueue, got %d", len(mockStore.enqueuedJobs))
 	}
-	if mockStore.prepareCalls != 1 {
-		t.Fatalf("expected one coupon preparation, got %d", mockStore.prepareCalls)
+	if mockStore.enqueuedJobs[0].OrderID != 101 {
+		t.Fatalf("expected enqueue for order 101, got %+v", mockStore.enqueuedJobs[0])
 	}
-	if len(mockStore.recordDeliveryEvents) != 1 {
-		t.Fatalf("expected one delivery record, got %d", len(mockStore.recordDeliveryEvents))
+	if notifier.notifiedOrderIDs[0] != 101 {
+		t.Fatalf("expected notifier to receive order 101, got %v", notifier.notifiedOrderIDs)
+	}
+	if mockStore.recordPaymentCalls != 0 {
+		t.Fatalf("expected no payment record on approved webhook, got %d calls", mockStore.recordPaymentCalls)
 	}
 }
 
-func TestFulfillPaidOrderSkipsConfirmedDelivery(t *testing.T) {
+func TestHandleWebhookCaptureCompletedRecordsPaymentAndEnqueuesJob(t *testing.T) {
 	t.Parallel()
 
 	mockStore := &mockPaymentStore{
 		order: store.Order{
 			ID:                        102,
-			UserID:                    9,
-			ListingID:                 77,
 			OrderNumber:               "ORD-102",
-			Status:                    "delivered",
 			ProviderCheckoutReference: "checkout-102",
-		},
-		delivery: &store.CouponDelivery{
-			OrderID:  102,
-			CouponID: 600,
-			Status:   "confirmed",
+			CurrencyCode:              "ILS",
+			SalePriceAmount:           2499,
 		},
 	}
-	deliverer := &stubDeliverer{}
+
+	var event payPalWebhookEvent
+	event.ID = "WH-102"
+	event.EventType = "PAYMENT.CAPTURE.COMPLETED"
+	event.Resource.ID = "capture-102"
+	event.Resource.Amount.Value = "24.99"
+	event.Resource.Amount.CurrencyCode = "ILS"
+	event.Resource.SupplementaryData.RelatedIDs.OrderID = "checkout-102"
 
 	service := &Service{
-		logger:    slog.New(slog.NewTextHandler(io.Discard, nil)),
-		store:     mockStore,
-		deliverer: deliverer,
+		logger:       slog.New(slog.NewTextHandler(io.Discard, nil)),
+		store:        mockStore,
+		providerName: "paypal",
+		paypal:       &stubPayPalGateway{verifyWebhookEvent: event},
 	}
 
-	if err := service.fulfillPaidOrder(context.Background(), 102); err != nil {
-		t.Fatalf("expected fulfillPaidOrder to no-op, got %v", err)
+	if err := service.HandleWebhook(context.Background(), "paypal", http.Header{}, []byte(`{}`)); err != nil {
+		t.Fatalf("expected webhook handling to succeed, got %v", err)
 	}
-	if deliverer.sendCount != 0 {
-		t.Fatalf("expected no message send, got %d", deliverer.sendCount)
+
+	if mockStore.recordPaymentCalls != 1 {
+		t.Fatalf("expected one payment record call, got %d", mockStore.recordPaymentCalls)
 	}
-	if mockStore.prepareCalls != 0 {
-		t.Fatalf("expected no coupon preparation, got %d", mockStore.prepareCalls)
+	if got := mockStore.recordedPayments[0]; got.Status != "captured" || got.ProviderPaymentID != "capture-102" {
+		t.Fatalf("unexpected payment record params: %+v", got)
+	}
+	if len(mockStore.enqueuedJobs) != 1 {
+		t.Fatalf("expected one fulfillment job enqueue, got %d", len(mockStore.enqueuedJobs))
 	}
 }
 
-func TestReconcilePendingOrderCapturesApprovedOrder(t *testing.T) {
+func TestProcessFulfillmentJobCapturesAndDeliversCoupon(t *testing.T) {
 	t.Parallel()
 
 	testKey := "1234567890abcdef1234567890abcdef"
 	ciphertext, nonce := encryptTestCouponCode(t, testKey, "CODE-9999")
 
+	order := store.Order{
+		ID:                        103,
+		UserID:                    11,
+		ListingID:                 66,
+		OrderNumber:               "ORD-103",
+		Status:                    "pending_payment",
+		CouponID:                  int64Ptr(701),
+		CurrencyCode:              "ILS",
+		SalePriceAmount:           1999,
+		ProviderCheckoutReference: "checkout-103",
+	}
+	coupon := store.Coupon{
+		ID:                   701,
+		ListingID:            66,
+		CouponCodeCiphertext: ciphertext,
+		CouponCodeNonce:      nonce,
+		CouponMaskedDisplay:  "***9999",
+		ExpiryAt:             time.Date(2026, time.November, 30, 0, 0, 0, 0, time.UTC),
+	}
+	user := store.User{ID: 11, TelegramUserID: 111}
+
 	mockStore := &mockPaymentStore{
-		order: store.Order{
-			ID:                        103,
-			UserID:                    11,
-			ListingID:                 66,
-			OrderNumber:               "ORD-103",
-			Status:                    "pending_payment",
-			CouponID:                  int64Ptr(701),
-			CurrencyCode:              "ILS",
-			SalePriceAmount:           1999,
-			ProviderCheckoutReference: "checkout-103",
-		},
-		user: store.User{ID: 11, TelegramUserID: 111},
-		listing: store.Listing{
-			ID:                     66,
-			MerchantName:           "Bakery",
-			Title:                  "ILS 30 coupon",
-			RedemptionInstructions: "Use in store.",
-		},
-		coupon: store.Coupon{
-			ID:                   701,
-			ListingID:            66,
-			CouponCodeCiphertext: ciphertext,
-			CouponCodeNonce:      nonce,
-			CouponMaskedDisplay:  "***9999",
-			ExpiryAt:             time.Date(2026, time.November, 30, 0, 0, 0, 0, time.UTC),
+		order: order,
+		preparations: []mockPreparationResult{
+			{preparation: store.FulfillmentPreparation{Order: order}, err: store.ErrPaymentRequired},
+			{
+				preparation: store.FulfillmentPreparation{
+					Order:  store.Order{ID: order.ID, UserID: order.UserID, OrderNumber: order.OrderNumber, CouponID: order.CouponID, ProviderCheckoutReference: order.ProviderCheckoutReference, Status: "delivery_pending"},
+					Coupon: &coupon,
+					User:   &user,
+				},
+			},
 		},
 	}
 	deliverer := &stubDeliverer{}
 	gateway := &stubPayPalGateway{
-		orderSnapshot: payPalOrderSnapshot{
-			OrderID:      "checkout-103",
-			Status:       "approved",
-			Amount:       1999,
-			CurrencyCode: "ILS",
-		},
 		capture: payPalCapture{
 			OrderID:      "checkout-103",
 			CaptureID:    "capture-103",
@@ -175,14 +162,15 @@ func TestReconcilePendingOrderCapturesApprovedOrder(t *testing.T) {
 		paypal:              gateway,
 	}
 
-	err := service.ReconcilePendingOrder(context.Background(), store.PendingPaymentReconciliationCandidate{
+	err := service.ProcessFulfillmentJob(context.Background(), store.FulfillmentJob{
+		ID:                        1,
 		OrderID:                   103,
-		OrderNumber:               "ORD-103",
-		Status:                    "pending_payment",
 		ProviderCheckoutReference: "checkout-103",
+		Status:                    "processing",
+		AttemptCount:              1,
 	})
 	if err != nil {
-		t.Fatalf("expected reconciliation to succeed, got %v", err)
+		t.Fatalf("expected fulfillment processing to succeed, got %v", err)
 	}
 
 	if gateway.captureCalls != 1 {
@@ -191,37 +179,172 @@ func TestReconcilePendingOrderCapturesApprovedOrder(t *testing.T) {
 	if deliverer.sendCount != 1 {
 		t.Fatalf("expected one coupon delivery, got %d", deliverer.sendCount)
 	}
+	if len(mockStore.recordDeliveryEvents) != 1 || mockStore.recordDeliveryEvents[0].Status != "confirmed" {
+		t.Fatalf("expected one confirmed delivery event, got %+v", mockStore.recordDeliveryEvents)
+	}
+	if len(mockStore.succeededJobs) != 1 {
+		t.Fatalf("expected job success marker, got %d", len(mockStore.succeededJobs))
+	}
 }
 
-func TestFulfillPaidOrderEscalatesReleasedHoldAfterSuccessfulPayment(t *testing.T) {
+func TestProcessFulfillmentJobSkipsConfirmedDelivery(t *testing.T) {
 	t.Parallel()
 
+	order := store.Order{
+		ID:                        104,
+		UserID:                    9,
+		OrderNumber:               "ORD-104",
+		Status:                    "delivered",
+		ProviderCheckoutReference: "checkout-104",
+	}
+
 	mockStore := &mockPaymentStore{
-		order: store.Order{
-			ID:                        104,
-			UserID:                    21,
-			ListingID:                 56,
-			OrderNumber:               "ORD-104",
-			Status:                    "paid",
-			FailureReason:             "checkout_hold_expired",
-			ProviderCheckoutReference: "checkout-104",
+		order: order,
+		preparations: []mockPreparationResult{
+			{
+				preparation: store.FulfillmentPreparation{
+					Order: order,
+					Delivery: &store.CouponDelivery{
+						OrderID:  104,
+						CouponID: 600,
+						Status:   "confirmed",
+					},
+				},
+			},
 		},
 	}
+	deliverer := &stubDeliverer{}
 
 	service := &Service{
-		logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
-		store:  mockStore,
+		logger:    slog.New(slog.NewTextHandler(io.Discard, nil)),
+		store:     mockStore,
+		deliverer: deliverer,
 	}
 
-	if err := service.fulfillPaidOrder(context.Background(), 104); err != nil {
-		t.Fatalf("expected paid order escalation, got %v", err)
+	if err := service.ProcessFulfillmentJob(context.Background(), store.FulfillmentJob{ID: 2, OrderID: 104, AttemptCount: 1}); err != nil {
+		t.Fatalf("expected no-op fulfillment to succeed, got %v", err)
+	}
+	if deliverer.sendCount != 0 {
+		t.Fatalf("expected no Telegram send, got %d", deliverer.sendCount)
+	}
+	if len(mockStore.succeededJobs) != 1 {
+		t.Fatalf("expected job success marker, got %d", len(mockStore.succeededJobs))
+	}
+}
+
+func TestProcessFulfillmentJobRetriesTelegramTimeout(t *testing.T) {
+	t.Parallel()
+
+	testKey := "1234567890abcdef1234567890abcdef"
+	ciphertext, nonce := encryptTestCouponCode(t, testKey, "CODE-1111")
+
+	order := store.Order{
+		ID:                        105,
+		UserID:                    15,
+		OrderNumber:               "ORD-105",
+		Status:                    "delivery_pending",
+		CouponID:                  int64Ptr(801),
+		ProviderCheckoutReference: "checkout-105",
+	}
+	coupon := store.Coupon{
+		ID:                   801,
+		CouponCodeCiphertext: ciphertext,
+		CouponCodeNonce:      nonce,
+		ExpiryAt:             time.Date(2026, time.November, 30, 0, 0, 0, 0, time.UTC),
+	}
+	user := store.User{ID: 15, TelegramUserID: 515}
+
+	mockStore := &mockPaymentStore{
+		order: order,
+		preparations: []mockPreparationResult{
+			{
+				preparation: store.FulfillmentPreparation{
+					Order:  order,
+					Coupon: &coupon,
+					User:   &user,
+				},
+			},
+		},
+	}
+	deliverer := &stubDeliverer{err: timeoutErr{}}
+
+	service := &Service{
+		logger:              slog.New(slog.NewTextHandler(io.Discard, nil)),
+		store:               mockStore,
+		deliverer:           deliverer,
+		couponEncryptionKey: testKey,
 	}
 
+	if err := service.ProcessFulfillmentJob(context.Background(), store.FulfillmentJob{ID: 3, OrderID: 105, AttemptCount: 1}); err != nil {
+		t.Fatalf("expected retry scheduling to succeed, got %v", err)
+	}
+
+	if len(mockStore.rescheduledJobs) != 1 {
+		t.Fatalf("expected one reschedule, got %d", len(mockStore.rescheduledJobs))
+	}
+	if len(mockStore.recordDeliveryEvents) != 1 || mockStore.recordDeliveryEvents[0].Status != "failed" {
+		t.Fatalf("expected one failed delivery record, got %+v", mockStore.recordDeliveryEvents)
+	}
+	if mockStore.supportCaseCalls != 0 {
+		t.Fatalf("expected no support case before final attempt, got %d", mockStore.supportCaseCalls)
+	}
+}
+
+func TestProcessFulfillmentJobEscalatesAfterFifthDeliveryFailure(t *testing.T) {
+	t.Parallel()
+
+	testKey := "1234567890abcdef1234567890abcdef"
+	ciphertext, nonce := encryptTestCouponCode(t, testKey, "CODE-2222")
+
+	order := store.Order{
+		ID:                        106,
+		UserID:                    16,
+		OrderNumber:               "ORD-106",
+		Status:                    "delivery_pending",
+		CouponID:                  int64Ptr(802),
+		ProviderCheckoutReference: "checkout-106",
+	}
+	coupon := store.Coupon{
+		ID:                   802,
+		CouponCodeCiphertext: ciphertext,
+		CouponCodeNonce:      nonce,
+		ExpiryAt:             time.Date(2026, time.November, 30, 0, 0, 0, 0, time.UTC),
+	}
+	user := store.User{ID: 16, TelegramUserID: 616}
+
+	mockStore := &mockPaymentStore{
+		order: order,
+		preparations: []mockPreparationResult{
+			{
+				preparation: store.FulfillmentPreparation{
+					Order:  order,
+					Coupon: &coupon,
+					User:   &user,
+				},
+			},
+		},
+	}
+	deliverer := &stubDeliverer{err: timeoutErr{}}
+
+	service := &Service{
+		logger:              slog.New(slog.NewTextHandler(io.Discard, nil)),
+		store:               mockStore,
+		deliverer:           deliverer,
+		couponEncryptionKey: testKey,
+	}
+
+	if err := service.ProcessFulfillmentJob(context.Background(), store.FulfillmentJob{ID: 4, OrderID: 106, AttemptCount: 5}); err != nil {
+		t.Fatalf("expected terminal escalation handling to succeed, got %v", err)
+	}
+
+	if len(mockStore.rescheduledJobs) != 0 {
+		t.Fatalf("expected no retry scheduling on fifth attempt, got %d", len(mockStore.rescheduledJobs))
+	}
 	if mockStore.supportCaseCalls != 1 {
-		t.Fatalf("expected one support case escalation, got %d", mockStore.supportCaseCalls)
+		t.Fatalf("expected one support case after fifth failure, got %d", mockStore.supportCaseCalls)
 	}
-	if len(mockStore.recordDeliveryEvents) != 0 {
-		t.Fatalf("expected no delivery events, got %d", len(mockStore.recordDeliveryEvents))
+	if len(mockStore.failedJobs) != 1 {
+		t.Fatalf("expected one terminal job failure mark, got %d", len(mockStore.failedJobs))
 	}
 }
 
@@ -230,12 +353,12 @@ func TestStartCheckoutReleasesReservationWhenProviderCreationFails(t *testing.T)
 
 	mockStore := &mockPaymentStore{
 		order: store.Order{
-			ID:              105,
+			ID:              107,
 			UserID:          31,
 			ListingID:       90,
-			OrderNumber:     "ORD-105",
+			OrderNumber:     "ORD-107",
 			Status:          "draft",
-			CouponID:        int64Ptr(801),
+			CouponID:        int64Ptr(901),
 			CurrencyCode:    "ILS",
 			SalePriceAmount: 1299,
 		},
@@ -263,6 +386,56 @@ func TestStartCheckoutReleasesReservationWhenProviderCreationFails(t *testing.T)
 	}
 	if mockStore.releaseCalls[0].FailureReason != "checkout_provider_create_failed" {
 		t.Fatalf("unexpected failure reason: %+v", mockStore.releaseCalls[0])
+	}
+}
+
+func TestStartCheckoutSendsMerchantAndCouponMetadataToPayPal(t *testing.T) {
+	t.Parallel()
+
+	mockStore := &mockPaymentStore{
+		order: store.Order{
+			ID:              108,
+			UserID:          32,
+			ListingID:       91,
+			OrderNumber:     "ORD-108",
+			Status:          "draft",
+			CouponID:        int64Ptr(902),
+			CurrencyCode:    "ILS",
+			SalePriceAmount: 2800,
+		},
+	}
+	gateway := &stubPayPalGateway{
+		createCheckout: payPalCheckout{
+			OrderID:     "pp-order-108",
+			ApprovalURL: "https://paypal.example/approve",
+		},
+	}
+
+	service := &Service{
+		logger:       slog.New(slog.NewTextHandler(io.Discard, nil)),
+		store:        mockStore,
+		providerName: "paypal",
+		appBaseURL:   "https://coupons.example.com",
+		paypal:       gateway,
+	}
+
+	_, err := service.StartCheckout(context.Background(), mockStore.order, store.Listing{
+		ID:           91,
+		MerchantName: "Test Store",
+		Title:        "ג‚×50 coupon",
+	})
+	if err != nil {
+		t.Fatalf("expected checkout creation to succeed, got %v", err)
+	}
+
+	if gateway.lastCreateCheckoutInput.BrandName != "Test Store" {
+		t.Fatalf("expected brand name to include merchant, got %q", gateway.lastCreateCheckoutInput.BrandName)
+	}
+	if gateway.lastCreateCheckoutInput.ItemName != "Test Store - ג‚×50 coupon" {
+		t.Fatalf("expected item name to include merchant and coupon title, got %q", gateway.lastCreateCheckoutInput.ItemName)
+	}
+	if gateway.lastCreateCheckoutInput.Description != "Test Store - ג‚×50 coupon" {
+		t.Fatalf("expected description to include merchant and coupon title, got %q", gateway.lastCreateCheckoutInput.Description)
 	}
 }
 
@@ -302,16 +475,47 @@ func TestBuildCheckoutItemSummaryFallsBackToRedemptionInstructions(t *testing.T)
 	}
 }
 
+func TestBuildCheckoutItemNameAvoidsDuplicateMerchantLabel(t *testing.T) {
+	t.Parallel()
+
+	got := buildCheckoutItemName(store.Listing{
+		MerchantName: "Test Store",
+		Title:        "Test Store ג‚×50 coupon",
+	})
+
+	if got != "Test Store ג‚×50 coupon" {
+		t.Fatalf("expected duplicate merchant name to be avoided, got %q", got)
+	}
+}
+
+func TestBuildCouponDeliveryMessageReturnsOnlyCouponCode(t *testing.T) {
+	t.Parallel()
+
+	got := buildCouponDeliveryMessage(`ABC<&>"'123`)
+	want := "<code>ABC&lt;&amp;&gt;&quot;&#39;123</code>"
+
+	if got != want {
+		t.Fatalf("expected minimal coupon-only delivery message, got %q", got)
+	}
+}
+
+type mockPreparationResult struct {
+	preparation store.FulfillmentPreparation
+	err         error
+}
+
 type mockPaymentStore struct {
 	order                store.Order
-	user                 store.User
-	listing              store.Listing
-	coupon               store.Coupon
-	delivery             *store.CouponDelivery
-	prepareCalls         int
-	supportCaseCalls     int
+	preparations         []mockPreparationResult
+	recordedPayments     []store.RecordPaymentEventParams
+	recordPaymentCalls   int
 	recordDeliveryEvents []store.RecordDeliveryEventParams
 	releaseCalls         []store.ReleaseCheckoutReservationParams
+	enqueuedJobs         []store.EnqueueFulfillmentJobParams
+	succeededJobs        []store.SucceedFulfillmentJobParams
+	rescheduledJobs      []store.RescheduleFulfillmentJobParams
+	failedJobs           []store.FailFulfillmentJobParams
+	supportCaseCalls     int
 }
 
 func (m *mockPaymentStore) MarkOrderPendingPayment(ctx context.Context, params store.MarkOrderPendingPaymentParams) (store.Order, error) {
@@ -329,6 +533,8 @@ func (m *mockPaymentStore) ReleaseCheckoutReservation(ctx context.Context, param
 }
 
 func (m *mockPaymentStore) RecordPaymentEvent(ctx context.Context, params store.RecordPaymentEventParams) (store.Payment, error) {
+	m.recordPaymentCalls++
+	m.recordedPayments = append(m.recordedPayments, params)
 	switch params.Status {
 	case "captured", "authorized":
 		m.order.Status = "paid"
@@ -351,35 +557,22 @@ func (m *mockPaymentStore) GetOrderByProviderCheckoutReference(ctx context.Conte
 	return m.order, nil
 }
 
-func (m *mockPaymentStore) GetCouponDeliveryForOrder(ctx context.Context, orderID int64) (*store.CouponDelivery, error) {
-	return m.delivery, nil
-}
-
 func (m *mockPaymentStore) GetOrder(ctx context.Context, orderID int64) (store.Order, error) {
 	return m.order, nil
 }
 
-func (m *mockPaymentStore) PrepareReservedCouponForDelivery(ctx context.Context, orderID int64) (store.Coupon, error) {
-	m.prepareCalls++
-	m.order.Status = "delivery_pending"
-	return m.coupon, nil
-}
-
-func (m *mockPaymentStore) GetCoupon(ctx context.Context, couponID int64) (store.Coupon, error) {
-	return m.coupon, nil
-}
-
-func (m *mockPaymentStore) GetUserByID(ctx context.Context, userID int64) (store.User, error) {
-	return m.user, nil
-}
-
-func (m *mockPaymentStore) GetListing(ctx context.Context, listingID int64) (store.Listing, error) {
-	return m.listing, nil
+func (m *mockPaymentStore) PrepareFulfillment(ctx context.Context, orderID int64) (store.FulfillmentPreparation, error) {
+	if len(m.preparations) == 0 {
+		return store.FulfillmentPreparation{Order: m.order}, nil
+	}
+	result := m.preparations[0]
+	m.preparations = m.preparations[1:]
+	return result.preparation, result.err
 }
 
 func (m *mockPaymentStore) RecordDeliveryEvent(ctx context.Context, params store.RecordDeliveryEventParams) (store.CouponDelivery, error) {
 	m.recordDeliveryEvents = append(m.recordDeliveryEvents, params)
-	m.delivery = &store.CouponDelivery{
+	return store.CouponDelivery{
 		OrderID:             params.OrderID,
 		CouponID:            params.CouponID,
 		Status:              params.Status,
@@ -388,49 +581,105 @@ func (m *mockPaymentStore) RecordDeliveryEvent(ctx context.Context, params store
 		SentAt:              params.SentAt,
 		ConfirmedAt:         params.ConfirmedAt,
 		FailureReason:       params.FailureReason,
-	}
-	m.order.Status = "delivered"
-	return *m.delivery, nil
+	}, nil
 }
 
 func (m *mockPaymentStore) EnsureSupportCase(ctx context.Context, params store.EnsureSupportCaseParams) (store.SupportCase, bool, error) {
 	m.supportCaseCalls++
-	return store.SupportCase{ID: 1}, true, nil
+	return store.SupportCase{ID: int64(m.supportCaseCalls)}, true, nil
+}
+
+func (m *mockPaymentStore) EnqueueFulfillmentJob(ctx context.Context, params store.EnqueueFulfillmentJobParams) (store.FulfillmentJob, error) {
+	m.enqueuedJobs = append(m.enqueuedJobs, params)
+	return store.FulfillmentJob{ID: int64(len(m.enqueuedJobs)), OrderID: params.OrderID, ProviderCheckoutReference: params.ProviderCheckoutReference}, nil
+}
+
+func (m *mockPaymentStore) MarkFulfillmentJobSucceeded(ctx context.Context, params store.SucceedFulfillmentJobParams) (store.FulfillmentJob, error) {
+	m.succeededJobs = append(m.succeededJobs, params)
+	return store.FulfillmentJob{ID: params.JobID, Status: "succeeded"}, nil
+}
+
+func (m *mockPaymentStore) RescheduleFulfillmentJob(ctx context.Context, params store.RescheduleFulfillmentJobParams) (store.FulfillmentJob, error) {
+	m.rescheduledJobs = append(m.rescheduledJobs, params)
+	return store.FulfillmentJob{ID: params.JobID, Status: "retry_scheduled", NextAttemptAt: params.NextAttemptAt}, nil
+}
+
+func (m *mockPaymentStore) FailFulfillmentJobTerminal(ctx context.Context, params store.FailFulfillmentJobParams) (store.FulfillmentJob, error) {
+	m.failedJobs = append(m.failedJobs, params)
+	return store.FulfillmentJob{ID: params.JobID, Status: "failed_terminal"}, nil
 }
 
 type stubDeliverer struct {
 	sendCount int
+	err       error
 }
 
 func (s *stubDeliverer) SendHTMLMessage(ctx context.Context, telegramUserID int64, text string) (int64, error) {
 	s.sendCount++
+	if s.err != nil {
+		return 0, s.err
+	}
 	return int64(9000 + s.sendCount), nil
 }
 
+type stubFulfillmentNotifier struct {
+	notifiedOrderIDs []int64
+}
+
+func (s *stubFulfillmentNotifier) NotifyFulfillment(orderID int64) {
+	s.notifiedOrderIDs = append(s.notifiedOrderIDs, orderID)
+}
+
 type stubPayPalGateway struct {
-	orderSnapshot     payPalOrderSnapshot
-	capture           payPalCapture
-	createCheckout    payPalCheckout
-	createCheckoutErr error
-	captureCalls      int
+	verifyWebhookEvent      payPalWebhookEvent
+	verifyWebhookErr        error
+	orderSnapshot           payPalOrderSnapshot
+	fallbackOrderSnapshot   payPalOrderSnapshot
+	capture                 payPalCapture
+	createCheckout          payPalCheckout
+	createCheckoutErr       error
+	captureErr              error
+	getOrderErr             error
+	captureCalls            int
+	getOrderCalls           int
+	lastCreateCheckoutInput payPalCreateCheckoutInput
 }
 
 func (s *stubPayPalGateway) CreateCheckout(ctx context.Context, input payPalCreateCheckoutInput) (payPalCheckout, error) {
+	s.lastCreateCheckoutInput = input
 	return s.createCheckout, s.createCheckoutErr
 }
 
 func (s *stubPayPalGateway) VerifyAndParseWebhook(ctx context.Context, headers http.Header, body []byte) (payPalWebhookEvent, error) {
-	return payPalWebhookEvent{}, nil
+	return s.verifyWebhookEvent, s.verifyWebhookErr
 }
 
 func (s *stubPayPalGateway) CaptureOrder(ctx context.Context, orderID string) (payPalCapture, error) {
 	s.captureCalls++
+	if s.captureErr != nil {
+		return payPalCapture{}, s.captureErr
+	}
 	return s.capture, nil
 }
 
 func (s *stubPayPalGateway) GetOrder(ctx context.Context, orderID string) (payPalOrderSnapshot, error) {
+	s.getOrderCalls++
+	if s.getOrderErr != nil {
+		return payPalOrderSnapshot{}, s.getOrderErr
+	}
+	if s.getOrderCalls > 1 && strings.TrimSpace(s.fallbackOrderSnapshot.OrderID) != "" {
+		return s.fallbackOrderSnapshot, nil
+	}
 	return s.orderSnapshot, nil
 }
+
+type timeoutErr struct{}
+
+func (timeoutErr) Error() string   { return "timeout" }
+func (timeoutErr) Timeout() bool   { return true }
+func (timeoutErr) Temporary() bool { return true }
+
+var _ net.Error = timeoutErr{}
 
 func encryptTestCouponCode(t *testing.T, key string, couponCode string) ([]byte, []byte) {
 	t.Helper()
@@ -448,10 +697,6 @@ func encryptTestCouponCode(t *testing.T, key string, couponCode string) ([]byte,
 	nonce := []byte("nonce-123456")
 	ciphertext := gcm.Seal(nil, nonce, []byte(couponCode), nil)
 	return ciphertext, nonce
-}
-
-func timePtr(value time.Time) *time.Time {
-	return &value
 }
 
 func int64Ptr(value int64) *int64 {

@@ -70,7 +70,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	ops.NewRunner(
+	runner := ops.NewRunner(
 		logger,
 		db,
 		router.PaymentService,
@@ -79,7 +79,9 @@ func main() {
 		cfg.OpsReconcileAfter,
 		cfg.OpsCheckoutHoldDuration,
 		cfg.OpsBatchSize,
-	).Start(ctx)
+	)
+	router.PaymentService.SetFulfillmentNotifier(runner)
+	runner.Start(ctx)
 
 	server := &http.Server{
 		Addr:              ":" + cfg.Port,

@@ -440,6 +440,257 @@ func (p *Postgres) ReleaseExpiredCheckoutHolds(ctx context.Context, olderThan ti
 	return int64(len(orderIDs)), nil
 }
 
+func (p *Postgres) EnqueueFulfillmentJob(ctx context.Context, params EnqueueFulfillmentJobParams) (FulfillmentJob, error) {
+	if err := p.ensurePool(); err != nil {
+		return FulfillmentJob{}, err
+	}
+	if params.OrderID == 0 {
+		return FulfillmentJob{}, fmt.Errorf("%w: order id is required", ErrInvalidArgument)
+	}
+
+	row := p.Pool.QueryRow(ctx, `
+		INSERT INTO fulfillment_jobs (
+			order_id,
+			provider_checkout_reference,
+			status,
+			attempt_count,
+			next_attempt_at,
+			last_step,
+			last_error
+		) VALUES ($1, $2, 'pending', 0, NOW(), $3, '')
+		ON CONFLICT (order_id) DO UPDATE
+		SET
+			provider_checkout_reference = COALESCE(NULLIF(EXCLUDED.provider_checkout_reference, ''), fulfillment_jobs.provider_checkout_reference),
+			status = CASE
+				WHEN fulfillment_jobs.status IN ('succeeded', 'failed_terminal', 'processing') THEN fulfillment_jobs.status
+				ELSE 'pending'
+			END,
+			next_attempt_at = CASE
+				WHEN fulfillment_jobs.status IN ('succeeded', 'failed_terminal', 'processing') THEN fulfillment_jobs.next_attempt_at
+				ELSE NOW()
+			END,
+			last_step = CASE
+				WHEN fulfillment_jobs.status IN ('succeeded', 'failed_terminal') THEN fulfillment_jobs.last_step
+				ELSE EXCLUDED.last_step
+			END,
+			last_error = CASE
+				WHEN fulfillment_jobs.status IN ('succeeded', 'failed_terminal') THEN fulfillment_jobs.last_error
+				ELSE ''
+			END,
+			locked_at = CASE
+				WHEN fulfillment_jobs.status = 'processing' THEN fulfillment_jobs.locked_at
+				ELSE NULL
+			END,
+			updated_at = NOW()
+		RETURNING
+			id,
+			order_id,
+			provider_checkout_reference,
+			status,
+			attempt_count,
+			next_attempt_at,
+			last_step,
+			last_error,
+			locked_at,
+			created_at,
+			updated_at
+	`, params.OrderID, params.ProviderCheckoutReference, params.LastStep)
+
+	job, err := scanFulfillmentJob(row)
+	if err != nil {
+		return FulfillmentJob{}, mapStoreErr(err)
+	}
+
+	return job, nil
+}
+
+func (p *Postgres) ClaimDueFulfillmentJobs(ctx context.Context, limit int) ([]FulfillmentJob, error) {
+	if err := p.ensurePool(); err != nil {
+		return nil, err
+	}
+	if limit <= 0 {
+		limit = 25
+	}
+
+	const staleProcessingAfter = 5 * time.Minute
+
+	rows, err := p.Pool.Query(ctx, `
+		WITH due AS (
+			SELECT id
+			FROM fulfillment_jobs
+			WHERE (
+				status IN ('pending', 'retry_scheduled')
+				AND next_attempt_at <= NOW()
+			) OR (
+				status = 'processing'
+				AND locked_at IS NOT NULL
+				AND locked_at <= $2
+			)
+			ORDER BY next_attempt_at ASC, id ASC
+			FOR UPDATE SKIP LOCKED
+			LIMIT $1
+		)
+		UPDATE fulfillment_jobs f
+		SET
+			status = 'processing',
+			attempt_count = f.attempt_count + 1,
+			locked_at = NOW(),
+			updated_at = NOW()
+		FROM due
+		WHERE f.id = due.id
+		RETURNING
+			f.id,
+			f.order_id,
+			f.provider_checkout_reference,
+			f.status,
+			f.attempt_count,
+			f.next_attempt_at,
+			f.last_step,
+			f.last_error,
+			f.locked_at,
+			f.created_at,
+			f.updated_at
+	`, limit, time.Now().UTC().Add(-staleProcessingAfter))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	jobs := make([]FulfillmentJob, 0, limit)
+	for rows.Next() {
+		job, err := scanFulfillmentJob(rows)
+		if err != nil {
+			return nil, err
+		}
+		jobs = append(jobs, job)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return jobs, nil
+}
+
+func (p *Postgres) MarkFulfillmentJobSucceeded(ctx context.Context, params SucceedFulfillmentJobParams) (FulfillmentJob, error) {
+	if err := p.ensurePool(); err != nil {
+		return FulfillmentJob{}, err
+	}
+	if params.JobID == 0 {
+		return FulfillmentJob{}, fmt.Errorf("%w: job id is required", ErrInvalidArgument)
+	}
+
+	row := p.Pool.QueryRow(ctx, `
+		UPDATE fulfillment_jobs
+		SET
+			status = 'succeeded',
+			next_attempt_at = NOW(),
+			last_step = $2,
+			last_error = '',
+			locked_at = NULL,
+			updated_at = NOW()
+		WHERE id = $1
+		RETURNING
+			id,
+			order_id,
+			provider_checkout_reference,
+			status,
+			attempt_count,
+			next_attempt_at,
+			last_step,
+			last_error,
+			locked_at,
+			created_at,
+			updated_at
+	`, params.JobID, params.LastStep)
+
+	job, err := scanFulfillmentJob(row)
+	if err != nil {
+		return FulfillmentJob{}, mapStoreErr(err)
+	}
+
+	return job, nil
+}
+
+func (p *Postgres) RescheduleFulfillmentJob(ctx context.Context, params RescheduleFulfillmentJobParams) (FulfillmentJob, error) {
+	if err := p.ensurePool(); err != nil {
+		return FulfillmentJob{}, err
+	}
+	if params.JobID == 0 {
+		return FulfillmentJob{}, fmt.Errorf("%w: job id is required", ErrInvalidArgument)
+	}
+
+	row := p.Pool.QueryRow(ctx, `
+		UPDATE fulfillment_jobs
+		SET
+			status = 'retry_scheduled',
+			next_attempt_at = $2,
+			last_step = $3,
+			last_error = $4,
+			locked_at = NULL,
+			updated_at = NOW()
+		WHERE id = $1
+		RETURNING
+			id,
+			order_id,
+			provider_checkout_reference,
+			status,
+			attempt_count,
+			next_attempt_at,
+			last_step,
+			last_error,
+			locked_at,
+			created_at,
+			updated_at
+	`, params.JobID, params.NextAttemptAt.UTC(), params.LastStep, truncateStoreText(params.LastError, 255))
+
+	job, err := scanFulfillmentJob(row)
+	if err != nil {
+		return FulfillmentJob{}, mapStoreErr(err)
+	}
+
+	return job, nil
+}
+
+func (p *Postgres) FailFulfillmentJobTerminal(ctx context.Context, params FailFulfillmentJobParams) (FulfillmentJob, error) {
+	if err := p.ensurePool(); err != nil {
+		return FulfillmentJob{}, err
+	}
+	if params.JobID == 0 {
+		return FulfillmentJob{}, fmt.Errorf("%w: job id is required", ErrInvalidArgument)
+	}
+
+	row := p.Pool.QueryRow(ctx, `
+		UPDATE fulfillment_jobs
+		SET
+			status = 'failed_terminal',
+			last_step = $2,
+			last_error = $3,
+			locked_at = NULL,
+			updated_at = NOW()
+		WHERE id = $1
+		RETURNING
+			id,
+			order_id,
+			provider_checkout_reference,
+			status,
+			attempt_count,
+			next_attempt_at,
+			last_step,
+			last_error,
+			locked_at,
+			created_at,
+			updated_at
+	`, params.JobID, params.LastStep, truncateStoreText(params.LastError, 255))
+
+	job, err := scanFulfillmentJob(row)
+	if err != nil {
+		return FulfillmentJob{}, mapStoreErr(err)
+	}
+
+	return job, nil
+}
+
 func (p *Postgres) EnsureSupportCase(ctx context.Context, params EnsureSupportCaseParams) (SupportCase, bool, error) {
 	if err := p.ensurePool(); err != nil {
 		return SupportCase{}, false, err
@@ -522,4 +773,31 @@ func defaultJSON(value string) string {
 		return "{}"
 	}
 	return value
+}
+
+func scanFulfillmentJob(row interface {
+	Scan(dest ...any) error
+}) (FulfillmentJob, error) {
+	var job FulfillmentJob
+	err := row.Scan(
+		&job.ID,
+		&job.OrderID,
+		&job.ProviderCheckoutReference,
+		&job.Status,
+		&job.AttemptCount,
+		&job.NextAttemptAt,
+		&job.LastStep,
+		&job.LastError,
+		&job.LockedAt,
+		&job.CreatedAt,
+		&job.UpdatedAt,
+	)
+	return job, err
+}
+
+func truncateStoreText(value string, limit int) string {
+	if limit <= 0 || len(value) <= limit {
+		return value
+	}
+	return value[:limit]
 }

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"html"
 	"log/slog"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -39,7 +40,7 @@ type CheckoutStarter interface {
 }
 
 func NewBotService(logger *slog.Logger, repo *store.Postgres, botToken string, cfg *config.Config) (*BotService, error) {
-	api, err := tgbotapi.NewBotAPI(botToken)
+	api, err := tgbotapi.NewBotAPIWithClient(botToken, tgbotapi.APIEndpoint, &http.Client{Timeout: 10 * time.Second})
 	if err != nil {
 		return nil, err
 	}
@@ -166,13 +167,7 @@ func (s *BotService) handleCallback(ctx context.Context, callback *tgbotapi.Call
 }
 
 func (s *BotService) handleBuyListing(ctx context.Context, callback *tgbotapi.CallbackQuery, listingID int64) error {
-	listing, err := s.store.GetListing(ctx, listingID)
-	if err != nil {
-		s.logger.Error("failed to get listing", "error", err, "listing_id", listingID)
-		return nil
-	}
-
-	return s.sendListingDetails(ctx, callback.Message.Chat.ID, listing)
+	return s.startCheckoutFromCallback(ctx, callback, listingID)
 }
 
 func (s *BotService) handleViewDetails(ctx context.Context, chatID int64, listingID int64) error {
@@ -207,6 +202,10 @@ func (s *BotService) handleAnotherDeal(ctx context.Context, chatID int64, curren
 }
 
 func (s *BotService) handleConfirmBuy(ctx context.Context, callback *tgbotapi.CallbackQuery, listingID int64) error {
+	return s.startCheckoutFromCallback(ctx, callback, listingID)
+}
+
+func (s *BotService) startCheckoutFromCallback(ctx context.Context, callback *tgbotapi.CallbackQuery, listingID int64) error {
 	if s.checkoutStarter == nil {
 		s.logger.Error("checkout starter is not configured")
 		return s.sendMessage(ctx, callback.Message.Chat.ID, "Payment is temporarily unavailable. Please try again later.")
@@ -270,7 +269,10 @@ Tap the PayPal button below to complete payment. We will deliver the coupon in T
 	msg.ParseMode = tgbotapi.ModeHTML
 	msg.ReplyMarkup = tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonURL("Pay with PayPal", checkout.ApprovalURL),
+			tgbotapi.NewInlineKeyboardButtonURL("🅿️ לתשלום ב-PayPal", checkout.ApprovalURL),
+		),
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("\U0001F449 \u05d3\u05d9\u05dc \u05d0\u05d7\u05e8", formatCallbackData(CallbackAnotherDeal, listing.ID)),
 		),
 		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData("Support", formatCallbackData(CallbackContactSupport, listing.ID)),
@@ -308,7 +310,7 @@ func (s *BotService) formatListingDetails(listing *store.Listing) string {
 	lines := []string{
 		fmt.Sprintf("%s <b>%s</b>", listingEmoji(listing), html.EscapeString(brandName)),
 		html.EscapeString(listingOfferLine(listing)),
-		fmt.Sprintf("במקום %s → <b>רק %s</b>", formatPrice(listing.CouponValueAmount), formatPrice(store.EffectiveListingPriceAmount(*listing))),
+		fmt.Sprintf("במקום %s ← <b>רק %s</b>", formatPrice(listing.CouponValueAmount), formatPrice(store.EffectiveListingPriceAmount(*listing))),
 		html.EscapeString(s.listingUrgencyLine(listing)),
 	}
 
@@ -581,6 +583,11 @@ func (s *BotService) sendFeaturedListing(ctx context.Context, chatID int64, list
 
 	listing := listings[index]
 	caption := normalizeTelegramText(s.formatFeaturedListingCaption(&listing))
+	s.logger.Debug("building featured listing keyboard",
+		"listing_id", listing.ID,
+		"listing_status", listing.Status,
+		"available_inventory_count", listing.AvailableInventoryCount,
+	)
 	keyboard := s.listingOfferKeyboard(listing.ID, listing.Status, listing.AvailableInventoryCount, len(listings) > 1)
 
 	if photoPath, ok := localListingPhotoPath(listing.PhotoKey); ok {
@@ -611,6 +618,11 @@ func (s *BotService) sendListingDetails(ctx context.Context, chatID int64, listi
 
 	msg := tgbotapi.NewMessage(chatID, normalizeTelegramText(s.formatListingDetails(&listing)))
 	msg.ParseMode = tgbotapi.ModeHTML
+	s.logger.Debug("building listing detail keyboard",
+		"listing_id", listing.ID,
+		"listing_status", listing.Status,
+		"available_inventory_count", listing.AvailableInventoryCount,
+	)
 	msg.ReplyMarkup = s.listingDetailKeyboardWithStatus(listing.ID, listing.Status, listing.AvailableInventoryCount)
 
 	_, err := s.botAPI.Send(msg)
