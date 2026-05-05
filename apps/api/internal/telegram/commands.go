@@ -39,6 +39,10 @@ type CheckoutStarter interface {
 	StartCheckout(ctx context.Context, order store.Order, listing store.Listing) (payments.CheckoutLink, error)
 }
 
+type ExpiredCheckoutHoldNotifier interface {
+	NotifyExpiredCheckoutHold(ctx context.Context, hold store.ReleasedCheckoutHold) error
+}
+
 func NewBotService(logger *slog.Logger, repo *store.Postgres, botToken string, cfg *config.Config) (*BotService, error) {
 	api, err := tgbotapi.NewBotAPIWithClient(botToken, tgbotapi.APIEndpoint, &http.Client{Timeout: 10 * time.Second})
 	if err != nil {
@@ -699,6 +703,32 @@ func (s *BotService) SendHTMLMessage(ctx context.Context, telegramUserID int64, 
 		return 0, err
 	}
 	return int64(sent.MessageID), nil
+}
+
+func (s *BotService) NotifyExpiredCheckoutHold(ctx context.Context, hold store.ReleasedCheckoutHold) error {
+	if s == nil {
+		return nil
+	}
+	if hold.TelegramUserID == 0 {
+		return fmt.Errorf("telegram user id is required")
+	}
+
+	message := "<b>Your checkout window expired.</b>\n" +
+		"We released that reserved coupon because payment was not completed in time.\n\n" +
+		"Here is another available deal:"
+	if err := s.sendMessage(ctx, hold.TelegramUserID, message); err != nil {
+		return err
+	}
+
+	listings, err := s.loadStartListings(ctx)
+	if err != nil {
+		return err
+	}
+	if len(listings) == 0 {
+		return s.sendMessage(ctx, hold.TelegramUserID, "No coupons are available right now. Send /start again soon.")
+	}
+
+	return s.sendFeaturedListing(ctx, hold.TelegramUserID, listings, 0)
 }
 
 func normalizeTelegramText(text string) string {

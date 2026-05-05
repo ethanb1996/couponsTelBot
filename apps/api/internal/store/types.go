@@ -220,6 +220,14 @@ type PendingPaymentReconciliationCandidate struct {
 	UpdatedAt                 time.Time
 }
 
+type ReleasedCheckoutHold struct {
+	OrderID        int64
+	OrderNumber    string
+	UserID         int64
+	TelegramUserID int64
+	ListingID      int64
+}
+
 type CreateCouponSourceParams struct {
 	SourceName        string
 	SourceType        string

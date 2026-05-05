@@ -74,6 +74,7 @@ func main() {
 		logger,
 		db,
 		router.PaymentService,
+		router.BotService,
 		cfg.OpsSweepInterval,
 		cfg.OpsDeliveryAlertAfter,
 		cfg.OpsReconcileAfter,

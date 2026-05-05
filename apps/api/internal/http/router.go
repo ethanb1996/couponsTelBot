@@ -27,6 +27,7 @@ type Dependencies struct {
 type Router struct {
 	Handler        http.Handler
 	PaymentService *payments.Service
+	BotService     *telegram.BotService
 }
 
 func NewRouter(deps Dependencies) (Router, error) {
@@ -83,6 +84,7 @@ func NewRouter(deps Dependencies) (Router, error) {
 			WithAccessLog(deps.Logger),
 		),
 		PaymentService: paymentService,
+		BotService:     botService,
 	}, nil
 }
 

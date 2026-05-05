@@ -349,23 +349,30 @@ func (p *Postgres) ListPendingPaymentReconciliationCandidates(ctx context.Contex
 	return candidates, nil
 }
 
-func (p *Postgres) ReleaseExpiredCheckoutHolds(ctx context.Context, olderThan time.Duration) (int64, error) {
+func (p *Postgres) ReleaseExpiredCheckoutHolds(ctx context.Context, olderThan time.Duration) ([]ReleasedCheckoutHold, error) {
 	if err := p.ensurePool(); err != nil {
-		return 0, err
+		return nil, err
 	}
 
 	cutoff := time.Now().UTC().Add(-olderThan)
 	tx, err := p.Pool.Begin(ctx)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 	defer func() {
 		_ = tx.Rollback(ctx)
 	}()
 
 	rows, err := tx.Query(ctx, `
-		SELECT o.id, o.coupon_id
+		SELECT
+			o.id,
+			o.order_number,
+			o.user_id,
+			u.telegram_user_id,
+			o.listing_id,
+			o.coupon_id
 		FROM orders o
+		INNER JOIN users u ON u.id = o.user_id
 		WHERE o.status = 'pending_payment'
 			AND o.coupon_id IS NOT NULL
 			AND COALESCE(o.placed_at, o.updated_at, o.created_at) <= $1
@@ -378,32 +385,41 @@ func (p *Postgres) ReleaseExpiredCheckoutHolds(ctx context.Context, olderThan ti
 		FOR UPDATE SKIP LOCKED
 	`, cutoff)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 	defer rows.Close()
 
 	orderIDs := make([]int64, 0)
 	couponIDs := make([]int64, 0)
+	released := make([]ReleasedCheckoutHold, 0)
 	for rows.Next() {
-		var orderID int64
+		var hold ReleasedCheckoutHold
 		var couponID *int64
-		if err := rows.Scan(&orderID, &couponID); err != nil {
-			return 0, err
+		if err := rows.Scan(
+			&hold.OrderID,
+			&hold.OrderNumber,
+			&hold.UserID,
+			&hold.TelegramUserID,
+			&hold.ListingID,
+			&couponID,
+		); err != nil {
+			return nil, err
 		}
-		orderIDs = append(orderIDs, orderID)
+		orderIDs = append(orderIDs, hold.OrderID)
+		released = append(released, hold)
 		if couponID != nil {
 			couponIDs = append(couponIDs, *couponID)
 		}
 	}
 	if err := rows.Err(); err != nil {
-		return 0, err
+		return nil, err
 	}
 
 	if len(orderIDs) == 0 {
 		if err := tx.Commit(ctx); err != nil {
-			return 0, err
+			return nil, err
 		}
-		return 0, nil
+		return nil, nil
 	}
 
 	if len(couponIDs) > 0 {
@@ -416,7 +432,7 @@ func (p *Postgres) ReleaseExpiredCheckoutHolds(ctx context.Context, olderThan ti
 				AND inventory_status = 'reserved'
 		`, couponIDs)
 		if err != nil {
-			return 0, err
+			return nil, err
 		}
 	}
 
@@ -430,14 +446,14 @@ func (p *Postgres) ReleaseExpiredCheckoutHolds(ctx context.Context, olderThan ti
 		WHERE id = ANY($1)
 	`, orderIDs)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 
 	if err := tx.Commit(ctx); err != nil {
-		return 0, err
+		return nil, err
 	}
 
-	return int64(len(orderIDs)), nil
+	return released, nil
 }
 
 func (p *Postgres) EnqueueFulfillmentJob(ctx context.Context, params EnqueueFulfillmentJobParams) (FulfillmentJob, error) {

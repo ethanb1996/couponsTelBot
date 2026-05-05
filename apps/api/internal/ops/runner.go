@@ -14,6 +14,10 @@ type PaymentReconciler interface {
 	ProcessFulfillmentJob(ctx context.Context, job store.FulfillmentJob) error
 }
 
+type ExpiredCheckoutHoldNotifier interface {
+	NotifyExpiredCheckoutHold(ctx context.Context, hold store.ReleasedCheckoutHold) error
+}
+
 type Runner struct {
 	logger             *slog.Logger
 	store              *store.Postgres
@@ -24,13 +28,15 @@ type Runner struct {
 	checkoutHoldAfter  time.Duration
 	batchSize          int
 	fulfillmentWakeCh  chan int64
+	holdNotifier       ExpiredCheckoutHoldNotifier
 }
 
-func NewRunner(logger *slog.Logger, repo *store.Postgres, reconciler PaymentReconciler, sweepInterval time.Duration, deliveryAlertAfter time.Duration, reconcileAfter time.Duration, checkoutHoldAfter time.Duration, batchSize int) *Runner {
+func NewRunner(logger *slog.Logger, repo *store.Postgres, reconciler PaymentReconciler, holdNotifier ExpiredCheckoutHoldNotifier, sweepInterval time.Duration, deliveryAlertAfter time.Duration, reconcileAfter time.Duration, checkoutHoldAfter time.Duration, batchSize int) *Runner {
 	return &Runner{
 		logger:             logger,
 		store:              repo,
 		reconciler:         reconciler,
+		holdNotifier:       holdNotifier,
 		sweepInterval:      sweepInterval,
 		deliveryAlertAfter: deliveryAlertAfter,
 		reconcileAfter:     reconcileAfter,
@@ -129,14 +135,29 @@ func (r *Runner) runCheckoutHoldRelease(ctx context.Context) {
 		return
 	}
 
-	if released == 0 {
+	if len(released) == 0 {
 		return
 	}
 
 	r.logger.Warn("released expired checkout holds",
-		"released_orders", released,
+		"released_orders", len(released),
 		"hold_duration", r.checkoutHoldAfter.String(),
 	)
+
+	if r.holdNotifier == nil {
+		return
+	}
+
+	for _, hold := range released {
+		if err := r.holdNotifier.NotifyExpiredCheckoutHold(ctx, hold); err != nil {
+			r.logger.Error("failed to notify expired checkout hold",
+				"order_id", hold.OrderID,
+				"order_number", hold.OrderNumber,
+				"telegram_user_id", hold.TelegramUserID,
+				"error", err,
+			)
+		}
+	}
 }
 
 func (r *Runner) runDeliveryDetection(ctx context.Context) {
