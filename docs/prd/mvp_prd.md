@@ -4,291 +4,227 @@ Status: Draft
 Owner: PRD Agent
 
 ## Product Summary
-The MVP is a Telegram-first coupon resale product for users in Israel. The business pre-buys coupon inventory, lists that inventory inside Telegram, accepts payment in ILS through an approved payment provider, and delivers the coupon to the user after successful payment.
+The MVP is a Telegram-first coupon sales product for users in Israel. The business works directly with small businesses to publish fixed offers, sends buyers to PayBox payment links, verifies payment manually, and delivers predefined coupon codes in Telegram after approval.
 
-This is intentionally a narrower MVP than a discovery marketplace. It is designed around one controlled loop:
+This is intentionally a narrow MVP. It is designed around one controlled loop:
 
-1. Hold inventory before sale
-2. Sell inventory in Telegram
-3. Take payment in ILS
-4. Deliver coupon immediately
+1. Create a merchant-approved offer
+2. Sell the offer in Telegram
+3. Collect payment through PayBox
+4. Verify the buyer manually
+5. Deliver a predefined code
 
 ## Problem Statement
-Users who want discounted fast-food and similar coupons do not have a fast, simple way to buy a ready-to-use coupon inside Telegram. The current experience usually requires searching across multiple channels, validating whether the deal is still good, and figuring out how to redeem it.
+Small local businesses need a lightweight way to sell simple deals in Telegram, and buyers need a faster path than browsing scattered deal sources and unclear redemption terms.
 
-This MVP solves a smaller problem than full coupon discovery. It gives users a direct purchase path to pre-bought inventory that the seller already controls.
+This MVP solves a narrower problem than a marketplace or discovery network. It gives users a direct purchase path to a merchant-approved offer with a simple follow-up verification step.
 
 ## Product Goals
-1. Validate that Israeli Telegram users will buy pre-bought coupons directly in Telegram.
-2. Prove that a simple inventory-sale flow converts better than a broader discovery experience for the first wedge.
-3. Measure whether immediate post-payment coupon delivery creates a compelling user experience.
-4. Validate margin between coupon acquisition cost and resale price after payment fees.
-5. Operate with a small number of controlled coupon types and a small number of suppliers.
+1. Validate that Israeli Telegram users will buy fixed merchant-partner offers directly in Telegram.
+2. Prove that a semi-manual payment verification flow is good enough for fast go-to-market validation.
+3. Measure whether predefined code delivery after approval creates a workable customer experience.
+4. Validate that a small team can operate approval and fulfillment manually without chaos.
+5. Learn which merchant offer shapes convert and which support issues appear first.
 
 ## Non-Goals
 - Building a broad coupon discovery network
+- Building a multi-merchant marketplace
 - Affiliate-first monetization
-- Sponsored placement marketplace
-- User-to-user coupon marketplace
+- Automated provider reconciliation as a required dependency
 - Merchant self-serve tooling
-- Multi-country expansion
-- Any sourcing flow that depends on restricted automation, captcha bypassing, or anti-bot evasion
+- User-to-user coupon marketplace
+- Restricted automation against merchant systems
 
 ## Target Users
 
 ### Primary Users
-- Telegram users in Israel who want a fast buy flow for discounted coupons
-- Price-sensitive users who value speed and convenience more than deep browsing
-- Users willing to buy a clearly defined coupon product with final-sale terms
+- Telegram users in Israel who want a fast, simple deal purchase flow
+- Users comfortable paying first and waiting for quick manual approval
+- Buyers who value clarity over endless browsing
 
 ### Secondary Users
-- Internal operators managing inventory, listings, payments, and delivery
-- Approved suppliers providing pre-bought coupon inventory
-
-## User Pains
-- Buying discounted coupons is fragmented and inconvenient
-- Users cannot quickly tell which coupon is immediately usable
-- Searching for a coupon often takes too much effort
-- Users want a simple purchase and delivery experience inside Telegram
+- Internal operators managing offers, claims, and support
+- Small business partners supplying the offers and code pools
 
 ## Core Value Proposition
-Users can buy a pre-bought coupon in Telegram with:
-- a simple product listing
-- clear price in ILS
-- fast payment flow
-- immediate coupon delivery after successful payment
-- no need to search across multiple channels
+Users can buy a local offer in Telegram with:
+- a clear fixed price in ILS
+- a simple PayBox payment flow
+- fast manual verification
+- direct code delivery in Telegram
+- a clear support path
 
 ## Assumptions
-- The team can acquire coupon inventory before sale at a price that leaves margin after fees.
-- There are coupon types that can be lawfully held and resold with acceptable rights clarity.
-- Users will tolerate an all-sales-final model if the coupon, price, and delivery terms are explicit before payment.
-- A payment provider that accepts ILS can be integrated without excessive friction.
-- Inventory can be kept small enough that the team can verify each item before listing.
+- Small businesses are willing to authorize offers and provide predefined codes.
+- Users will tolerate a manual review step if the bot explains it clearly.
+- PayBox is acceptable for the first validation loop.
+- The team can manage approvals manually at low launch volume.
+- A small number of offers is enough to test demand.
 
 ## User Journeys
 
-### Journey 1: User Buys a Coupon
+### Journey 1: User Buys An Offer
 1. User opens the Telegram bot.
-2. User sees a list of available coupons with merchant name, coupon value, sale price, and key terms.
-3. User selects a coupon listing.
-4. User sees:
-   merchant name
-   coupon value
-   sale price in ILS
-   expiry
-   redemption instructions
-   explicit final-sale disclosure stating no refunds are available
-5. User chooses to buy.
-6. User is redirected to or shown the payment flow with a provider that accepts ILS.
-7. Payment succeeds.
-8. Coupon is delivered to the user in Telegram.
+2. User sees active offers with merchant name, title, price, and key terms.
+3. User opens an offer detail.
+4. User sees merchant disclosure, redemption terms, and support contact.
+5. User taps through to the PayBox link and pays.
+6. User returns to Telegram and submits the PayBox username used for payment.
+7. Admin verifies payment.
+8. The bot delivers a predefined code.
 
 Success condition:
-The user completes payment and receives the coupon without manual intervention.
+The user pays, gets approved, and receives a usable code with minimal back-and-forth.
 
-### Journey 2: Operator Lists Inventory
-1. Operator acquires coupon inventory.
-2. Operator verifies validity, expiry, transferability, and sale price.
-3. Operator stores the coupon securely in admin.
-4. Operator creates a Telegram listing linked to available inventory.
-5. Listing becomes available for sale.
-
-Success condition:
-Only inventory that is actually held and verified is offered for sale.
-
-### Journey 3: User Has a Post-Purchase Problem
-1. User reports that a coupon is invalid or unclear.
-2. Operator reviews the case manually.
-3. Operator checks coupon record, source history, and delivery record.
-4. Operator responds to the user.
+### Journey 2: Operator Publishes An Offer
+1. Operator creates or updates the merchant partner record.
+2. Operator configures the offer and payment link.
+3. Operator loads predefined codes.
+4. Operator previews and publishes the offer.
 
 Success condition:
-The team can investigate and document the issue even though the stated policy is that refunds are not available.
+Only merchant-approved offers with valid code supply go live.
+
+### Journey 3: User Has A Payment Or Redemption Problem
+1. User reports that payment was not approved or the code did not work.
+2. Operator reviews the order, claim, and code history.
+3. Operator responds manually and records the outcome.
+
+Success condition:
+The team can investigate and resolve issues without losing audit history.
 
 ## MVP Features
 
-### 1. Telegram Product Listing Flow
+### 1. Telegram Offer Listing Flow
 Must have
 
 Description:
-- list available coupons in Telegram
-- show price, value, expiry, and key terms
-- allow user to open detail view and buy
+- list active offers in Telegram
+- show price, merchant name, and key terms
+- let the user open detail view and start payment
 
-### 2. Controlled Coupon Inventory
+### 2. Merchant Partner Management
 Must have
 
 Description:
-- pre-bought coupon inventory stored before sale
-- secure coupon storage
-- inventory count or availability tracking
+- create merchant partner records
+- store disclosure and support information
+- tie offers to merchants
 
-### 3. ILS Payment Flow
+### 3. Manual PayBox Payment Flow
 Must have
 
 Description:
-- payment provider integration that accepts ILS
-- successful payment confirmation before coupon delivery
-- payment status tracking
+- send a PayBox link
+- collect buyer PayBox username after payment
+- support manual approval or rejection
 
-### 4. Coupon Delivery Flow
+### 4. Predefined Code Delivery
 Must have
 
 Description:
-- deliver coupon to user only after payment succeeds
-- store delivery timestamp and delivery evidence
+- store code inventory securely
+- assign one code only after approval
+- record delivery outcome
 
-### 5. Admin Inventory Workflow
+### 5. Admin Review Workflow
 Must have
 
 Description:
-- create inventory entries
-- create listings
-- pause listings
-- mark inventory as sold, voided, expired, or disputed
+- review payment claims
+- approve or reject claims
+- pause offers and inspect code availability
 
-### 6. Order and Payment Tracking
+### 6. Order And Claim Tracking
 Must have
 
 Description:
-- record order creation, payment result, coupon assignment, and delivery state
+- record order creation, claim submission, approval result, code assignment, and delivery state
 
-### 7. Final-Sale Disclosure
+### 7. Support Logging
 Must have
 
 Description:
-- explicit statement before payment that all sales are final
-- explicit statement that no refunds are available
+- log payment issues, invalid codes, and delivery issues
+- link support cases to the order and code history
 
-### 8. Support Logging
-Must have
-
-Description:
-- allow operators to log complaints, failures, and delivery issues even if no refund path exists
-
-## Features Explicitly Excluded from MVP
+## Features Explicitly Excluded From MVP
 - Broad coupon discovery feed
-- Category preference engine
-- Affiliate click-out monetization
-- Sponsored listing marketplace
-- User-submitted coupon marketplace
-- Automated sourcing from protected merchant systems
-- Wallets or stored balance
-- Partial refunds, refunds on demand, or automated refund tooling
+- Recommendation engine
+- Merchant self-serve portal
+- Automated settlement tooling
+- Affiliate click-out model
+- User-submitted marketplace
 
-## Legal / Platform Risk Review
-This MVP intentionally accepts a riskier commerce posture than the previous discovery-first version. The main risk concentrations are:
-- direct resale rights and transferability
-- payment disputes and chargebacks
-- user trust damage when a delivered coupon fails
-- legal and consumer-risk exposure from a no-refund policy
+## Legal And Trust Review
+The direct merchant model is safer than the older resale framing, but it still has important risk areas:
+- merchant authorization and disclosure
+- payment-claim fraud
+- manual review delay
+- invalid or expired codes
+- support quality
 
 Required controls:
-- only sell inventory already in hand
-- verify transferability before listing
-- disclose the business role clearly
-- disclose final-sale / no-refund terms clearly before payment
-- keep audit records of inventory acquisition, payment, delivery, and support complaints
-
-## Safer Alternatives Considered
-
-### Safer Alternative: Discovery and Click-Out Model
-Why safer:
-- no inventory holding
-- no direct payment risk
-- lower refund and chargeback exposure
-
-Why not chosen for this MVP:
-- the goal is now to test direct Telegram sales with controlled inventory
-
-### Safer Alternative: Partner Distribution Without Resale
-Why safer:
-- fewer transferability and resale-rights issues
-
-Why not chosen for this MVP:
-- it introduces more dependency on partners and less control over product experience
+- tie every offer to a merchant partner
+- disclose the merchant relationship clearly
+- do not auto-deliver before manual approval
+- keep order, claim, delivery, and support audit trails
 
 ## Monetization Approach
-The MVP monetization model is direct resale margin:
+The MVP monetization can be flexible:
+- revenue share with merchant
+- markup on the offer
+- fixed operator fee
 
-1. Buy coupon inventory at cost
-2. List coupon inventory at resale price
-3. Collect payment in ILS
-4. Deliver coupon
-5. Keep the spread after fees and losses
-
-Core economic variables:
-- inventory acquisition cost
-- payment provider fee
-- invalid inventory loss
-- support overhead
-- resale price
-
-## Refund Policy
-The MVP policy is explicit:
-- all sales are final
-- no refunds are available
-
-This policy must be shown before payment, not after delivery.
-
-Even with this policy, the system still needs internal support handling for:
-- invalid coupon complaints
-- wrong delivery
-- duplicate charge investigation
-- fraud review
+The architecture should support any of these without changing the user-facing flow.
 
 ## Success Metrics
 
 ### Conversion Metrics
-- listing view to purchase rate
-- payment completion rate
+- offer view to payment-start rate
+- payment-start to claim-submission rate
+- claim approval rate
 - delivered order rate
 
-### Unit Economics Metrics
-- gross margin per coupon sold
-- payment fee rate
-- invalid inventory loss rate
-
 ### Reliability Metrics
+- average approval latency
 - successful delivery rate
-- post-purchase complaint rate
-- coupon failure rate
+- complaint rate per 100 orders
 
 ### Trust Metrics
 - repeat buyer rate
-- complaint rate per 100 orders
-- chargeback or payment dispute rate
+- payment mismatch rate
+- invalid code rate
 
 ## MVP Success Criteria
 The MVP should be considered successful if it demonstrates:
 
-1. Users complete direct coupon purchases inside the Telegram flow.
-2. Coupons can be delivered immediately after successful payment with high reliability.
-3. Unit economics are positive after payment fees and inventory losses.
-4. Complaint and dispute rates remain manageable for a small team.
-5. The business can run on a small set of controlled inventory without operational chaos.
+1. Users complete purchases through the Telegram and PayBox loop.
+2. Admins can verify and fulfill orders manually with manageable effort.
+3. Predefined code delivery works reliably after approval.
+4. Complaint volume stays manageable for a small team.
+5. Small businesses are willing to keep providing offers.
 
 ## Launch Plan
 
 ### Phase 0: Setup
-- identify transferable coupon inventory
-- choose ILS-capable payment provider
-- define final-sale terms and no-refund disclosure
-- define delivery and support logging workflow
+- onboard initial merchants
+- define disclosure wording
+- prepare PayBox links
+- define approval and support workflow
 
 ### Phase 1: Controlled Launch
-- launch a small number of coupon SKUs
-- limit inventory
-- monitor payment completion, delivery, and complaints
+- launch a small number of offers
+- keep claim volume low
+- monitor approval time, delivery, and support
 
 ### Phase 2: Optimization
-- refine listing formats
-- improve delivery reliability
-- expand only the coupon types with acceptable margins and failure rates
+- improve offer copy
+- improve admin review speed
+- expand only the offer types that convert cleanly
 
 ## Open Questions
-- which exact coupon types are safest to pre-buy and resell
-- which ILS payment provider is best for this product
-- what pre-purchase wording is required for the no-refund policy
-- what manual exception policy should exist for obvious delivery failures even if refunds are not generally available
+- what is the best claim review SLA for first launch
+- should payment links live at the merchant level or offer level
+- what default rejection guidance should the bot send
+- when should approval move from Telegram-first to admin-UI-first

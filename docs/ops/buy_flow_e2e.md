@@ -1,5 +1,10 @@
 # Buy Flow E2E Verification In Development
 
+Legacy note:
+This document covers the older automated PayPal checkout flow.
+It is preserved for historical implementation context, not as the target v1 test plan.
+Use `docs/architecture/bot_flow.md`, `docs/architecture/flows.md`, and `docs/architecture/api_contracts.md` for the current manual PayBox design.
+
 ## Purpose
 
 This document turns the current development buy flow into concrete end-to-end checks.

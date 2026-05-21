@@ -1,4 +1,5 @@
 # Assumptions
 
-- Supply path for MVP must be legally safer than bot-protected automation.
-- Users value convenience enough to pay a margin.
+- The MVP supply path must be legally safer than bot-protected automation.
+- Merchant-partner offers are a lower-risk model than ambiguous coupon resale.
+- Users value convenience enough to tolerate a short manual approval step.

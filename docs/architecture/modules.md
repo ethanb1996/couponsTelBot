@@ -1,12 +1,12 @@
 # Modules
 
 ## Module Overview
-The MVP should be organized around a direct coupon sale flow, not a discovery marketplace. The recommended modules are:
+The MVP should be organized around a direct merchant-partner sales flow, not a resale marketplace. The recommended modules are:
 - bot
 - api
 - admin
-- inventory and catalog
-- order and payment
+- merchant partners and offers
+- manual payment review
 - delivery and support
 - analytics and audit
 - background jobs
@@ -15,189 +15,110 @@ Modules intentionally excluded from MVP:
 - merchant self-serve
 - broad marketplace features
 - scraping or browser automation
+- automated provider reconciliation as the primary path
 - automated refund engine
 
 ## 1. Bot Module
 
 ### Responsibilities
 - receive Telegram updates through webhook handlers
-- show coupon listings and detail views
-- present pre-purchase terms including final-sale and no-refund disclosure
-- start payment flow
-- deliver purchased coupons after confirmed payment
-- collect complaint or support messages
+- show active offers and detail views
+- present payment instructions and merchant disclosure
+- collect buyer-submitted PayBox usernames
+- notify the buyer of review, approval, rejection, and support status
+- deliver predefined codes after approval
 
 ### What It Owns
 - Telegram-specific message formatting
-- Telegram command handling
-- lightweight conversational state
+- Telegram command and callback handling
+- lightweight conversational state for payment claim collection
 
 ### What It Does Not Own
-- canonical coupon inventory
-- payment confirmation rules
-- supplier verification logic
-- direct database writes outside approved API pathways
-
-### Inputs
-- Telegram webhook events
-- active listing data from API
-- payment and delivery endpoints from API
-
-### Outputs
-- Telegram messages
-- checkout intents
-- support events
-
-### Failure Points
-- Telegram API delivery failures
-- invalid bot state transitions
-- coupon delivery message failure
+- canonical offer data
+- payment verification rules
+- admin approval rules
+- direct database writes outside approved backend pathways
 
 ## 2. API Module
 
 ### Responsibilities
 - act as the main business logic layer
-- expose endpoints for bot and admin surfaces
-- validate listing, coupon, order, payment, and delivery lifecycle changes
-- enforce required metadata and status rules
-- manage complaint and support states
+- expose endpoints and service methods for bot and admin surfaces
+- validate offer, order, payment-claim, and delivery transitions
+- enforce required metadata and audit rules
+- manage support states
 
 ### What It Owns
-- inventory lifecycle rules
+- offer lifecycle rules
 - order lifecycle rules
-- payment lifecycle rules
-- delivery gating rules
-- authorization rules for admin versus user-facing operations
+- payment-claim lifecycle rules
+- code assignment and delivery gating rules
+- admin authorization rules
 
 ### What It Does Not Own
-- raw card handling
-- merchant-side automation
+- provider-side payment truth in v1
 - Telegram rendering concerns
-
-### Inputs
-- bot requests
-- admin requests
-- job runner invocations
-- payment-provider callbacks
-
-### Outputs
-- validated inventory and listings
-- validated orders and payments
-- delivery triggers
-- audit entries
-
-### Failure Points
-- invalid state transitions
-- duplicate order creation
-- deployment bugs affecting all surfaces
+- merchant acquisition strategy
 
 ## 3. Admin Module
 
 ### Responsibilities
-- create coupon inventory entries
-- create, edit, preview, publish, pause, expire, and remove listings
-- inspect source provenance and disclosure metadata
-- inspect coupon assignment and delivery history
+- create merchant partners
+- create, edit, preview, publish, pause, expire, and remove offers
+- inspect code availability and delivery history
+- approve or reject payment claims
 - review complaints and support cases
 
 ### What It Owns
 - operator user interface
 - internal review flows
-- publish and pause actions routed through API
+- publish, approval, and support actions routed through API
 
 ### What It Does Not Own
 - core business rules
 - direct database writes
-- external supplier integrations
 
-### Inputs
-- API read models for listings, coupons, orders, payments, and support cases
-
-### Outputs
-- operator actions sent to API
-
-### Failure Points
-- bad inventory entry
-- weak pre-publish validation
-- operator mistakes during assignment review
-
-## 4. Inventory and Catalog Module
+## 4. Merchant Partners And Offers Module
 
 ### Responsibilities
-- store pre-bought coupon inventory
-- represent Telegram-facing listings
-- store source provenance, rights checks, and disclosure state
-- manage listing status and inventory status
+- store partner records
+- store Telegram-facing offers
+- track payment links, disclosure, support contact, and redemption terms
+- manage offer availability based on code supply
 
 ### What It Owns
-- inventory intake checklist
-- listing state machine
-- coupon inventory state machine
+- merchant partner state
+- offer state machine
+- pre-publish validation
 
 ### What It Does Not Own
-- Telegram interaction logic
-- payment execution
-- supplier acquisition strategy
+- Telegram conversation logic
+- payment review execution
 
-### Inputs
-- operator intake actions
-- expiry checks
-- delivery results
-
-### Outputs
-- active listing set for bot delivery
-- assigned inventory for paid orders
-- audit-ready inventory history
-
-### Failure Points
-- incomplete source documentation
-- overselling inventory
-- stale or expired inventory left active
-
-## 5. Order and Payment Module
+## 5. Manual Payment Review Module
 
 ### Responsibilities
-- create orders from buy attempts
-- start payment with an ILS-capable provider
-- record payment success or failure
-- ensure coupon assignment only happens after successful payment
-- record final-sale / no-refund acknowledgment
+- record buyer-submitted PayBox usernames
+- create manual payment claims
+- route claims to admins
+- store approval or rejection outcomes
 
 ### What It Owns
-- order lifecycle
-- payment lifecycle
-- price snapshot at time of sale
-- provider reference data
+- payment-claim state machine
+- admin review actions
+- review audit data
 
 ### What It Does Not Own
-- raw card data
-- Telegram rendering logic
-- supplier verification
+- provider webhook logic as a required dependency
+- final delivery rendering
 
-### Inputs
-- buy requests from bot
-- payment-provider callbacks
-- admin actions for manual review
-
-### Outputs
-- order records
-- payment records
-- delivery trigger on successful payment
-- dispute evidence
-
-### Failure Points
-- payment succeeds but callback is delayed
-- duplicate charges
-- chargeback pressure despite no-refund policy
-
-## 6. Delivery and Support Module
+## 6. Delivery And Support Module
 
 ### Responsibilities
-- assign coupon inventory to a paid order
-- deliver the coupon to the user in Telegram
+- assign a predefined code to an approved order
+- deliver the code to the buyer in Telegram
 - track delivery timestamp and evidence
 - log user complaints and support cases
-- support manual review of invalid coupon claims
 
 ### What It Owns
 - assignment-to-delivery workflow
@@ -205,133 +126,69 @@ Modules intentionally excluded from MVP:
 - delivery confirmation state
 
 ### What It Does Not Own
-- payment-provider state
-- supplier acquisition logic
+- merchant acquisition logic
+- payment verification rules before approval
 
-### Inputs
-- paid orders
-- support requests
-- admin review actions
-
-### Outputs
-- delivered coupon messages
-- support-case status changes
-- disputed or voided inventory markers
-
-### Failure Points
-- assigned coupon not delivered
-- duplicate delivery
-- complaint handling without enough evidence
-
-## 7. Analytics and Audit Module
+## 7. Analytics And Audit Module
 
 ### Responsibilities
-- capture listing views, purchases, payment outcomes, delivery outcomes, and complaints
-- track complaint resolution times
+- capture offer views, order starts, claim submissions, approvals, rejections, deliveries, and complaints
 - maintain audit logs of operator actions and status changes
-- surface source quality, conversion, and dispute metrics
+- surface approval latency, rejection rate, and fulfillment health metrics
 
 ### What It Owns
 - event model for MVP metrics
-- audit log entries for sensitive actions
+- audit entries for sensitive actions
 - operational reporting inputs
 
 ### What It Does Not Own
-- recommendation engines
-- external BI complexity not needed for MVP
-
-### Inputs
-- bot events
-- admin actions
-- API state changes
-
-### Outputs
-- dashboards or reports for operators
-- metrics used in product decisions
-- recovery context for incidents
-
-### Failure Points
-- missing payment or delivery events
-- audit gaps during disputes
-- analytics coupling that slows core flows
+- recommendation systems
+- analytics dependencies that block order completion
 
 ## 8. Background Jobs Module
 
 ### Responsibilities
-- expire listings and inventory automatically based on timestamps
-- reconcile delayed payment events
-- run undelivered-order checks
-- generate periodic summary metrics
-- trigger non-blocking operational notifications
+- expire offers and predefined codes automatically when needed
+- remind operators about stale pending claims
+- flag approved-but-undelivered orders
+- generate lightweight summary metrics
 
 ### What It Owns
 - safe internal automation only
-- retries for internal asynchronous tasks
+- retries for non-critical asynchronous tasks
 
 ### What It Does Not Own
-- third-party website automation
+- provider payment truth
+- merchant-side automation
 - automated refund execution
-- merchant-side checkout actions
-
-### Inputs
-- database state
-- scheduler triggers
-- API-issued jobs
-
-### Outputs
-- listing and inventory status updates
-- notifications
-- aggregate metrics
-
-### Failure Points
-- missed expiry jobs
-- undetected paid-but-undelivered orders
-- background task backlog
 
 ## Integration Boundaries
 
 ### Bot -> API
-- Bot may read active listings and submit buy or support actions.
-- Bot may not decide inventory, payment, or compliance state.
+- Bot may read active offers and submit order or claim actions.
+- Bot may not decide approval, code assignment, or support resolution state.
 
 ### Admin -> API
-- Admin may trigger operator actions.
+- Admin may approve or reject payment claims and manage offers.
 - Admin may not mutate the database directly.
 
 ### API -> Database
-- API is the only normal write path for business entities.
-- Direct scripts should be reserved for migrations and controlled maintenance.
+- API is the only normal write path for merchant-partner, offer, order, claim, delivery, and support entities.
 
-### Payment Provider -> API
-- Payment provider confirms payment state.
-- Coupon delivery must never rely on client-side success alone.
-
-### Background Jobs -> API or Database
+### Background Jobs -> API Or Database
 - Jobs may perform approved internal lifecycle actions.
-- Jobs may not invent new business rules outside the API/domain layer.
-
-### Analytics -> Core Flows
-- Analytics should observe the system, not become a hard dependency for order completion or coupon delivery.
+- Jobs may not invent business rules outside the domain layer.
 
 ## Explicit MVP Exclusions
 
 ### Merchant Self-Serve Module
 Why excluded:
-- too much operational and policy complexity for MVP
+- adds operational and product complexity too early
 
-Deferred until:
-- partner demand and internal workflows are stable enough to automate safely
-
-### Scraping / Automation Module
+### Automated Provider Reconciliation Module
 Why excluded:
-- directly conflicts with the product's legal and platform-risk constraints
+- not required for the fastest manual PayBox launch
 
-Deferred until:
-- not planned in current strategy; compliant sourcing should be preferred instead
-
-### Automated Refund Module
+### Marketplace Module
 Why excluded:
-- the stated MVP policy is that no refunds are available
-
-Deferred until:
-- only if the business later changes policy or is required to support structured refund operations
+- the MVP is validating direct merchant offers, not multi-sided supply

@@ -1,27 +1,29 @@
 # Data Model
 
 ## Model Scope
-This document defines the core data model for the simplified MVP. In this version, commerce is not deferred. It is the core product.
+This document defines the target data model for the simplified manual PayBox MVP.
 
 The MVP-active entities are:
 - users
-- coupon_sources
-- coupons
-- listings
+- merchant_partners
+- predefined_codes
+- offers
 - orders
-- payments
+- manual_payment_claims
 - coupon_deliveries
 - support_cases
 - admin_actions
 
-Refunds are intentionally not part of the normal product flow because the stated MVP policy is that all sales are final and no refunds are available. Even so, support and dispute logging must still exist.
+Implementation note:
+- current code and schema still use `coupon_sources`, `listings`, and `coupons`
+- the target product model should treat these as temporary implementation primitives that will be migrated toward `merchant_partners`, `offers`, and `predefined_codes`
 
 ## Modeling Principles
-- Hold inventory before sale.
-- Separate coupon inventory from Telegram-facing listings.
-- Separate order state from payment state.
-- Separate payment success from coupon delivery success.
-- Preserve auditability for every inventory, payment, and support action.
+- represent direct merchant authorization clearly
+- separate the Telegram-facing offer from the code pool
+- separate order state from payment-claim review state
+- separate payment approval from code delivery
+- preserve auditability for offer, claim, fulfillment, and support actions
 
 ## 1. users
 Represents a Telegram user known to the system.
@@ -38,73 +40,65 @@ Suggested fields:
 - `created_at`
 - `updated_at`
 
-## 2. coupon_sources
-Represents the origin of pre-bought inventory.
+## 2. merchant_partners
+Represents a small business that authorizes offers in the bot.
 
 Suggested fields:
 - `id`
-- `source_name`
-- `source_type` (`merchant_partner`, `reseller`, `licensed_distributor`, `manual_source`)
+- `business_name`
 - `contact_reference`
-- `rights_status` (`unknown`, `review_pending`, `approved`, `restricted`, `rejected`)
-- `verification_notes`
-- `risk_rating` (`low`, `medium`, `high`)
-- `is_active`
+- `status` (`lead`, `active`, `paused`, `inactive`)
+- `approval_notes`
+- `merchant_disclosure_text`
+- `support_contact`
+- `default_payment_link`
 - `created_at`
 - `updated_at`
 
-## 3. coupons
-Represents one unit of pre-bought coupon inventory.
+## 3. predefined_codes
+Represents one unique code that may be delivered after manual payment approval.
 
 Purpose:
-- track owned inventory
-- assign exactly one coupon to at most one order
+- track owned or merchant-issued fulfillment units
+- assign exactly one code to at most one order
 
 Suggested fields:
 - `id`
-- `source_id`
-- `merchant_name`
-- `coupon_title`
-- `coupon_value_amount`
-- `sale_price_amount`
-- `currency_code`
-- `coupon_code_encrypted`
-- `coupon_masked_display`
+- `offer_id`
+- `merchant_partner_id`
+- `code_encrypted`
+- `code_masked_display`
+- `status` (`available`, `assigned`, `sent`, `voided`, `expired`)
 - `expiry_at`
-- `transferability_status` (`unknown`, `not_transferable`, `transferable_with_review`, `transferable`)
-- `inventory_status` (`available`, `reserved`, `assigned`, `delivered`, `used`, `expired`, `voided`, `disputed`)
-- `rights_verified_at`
-- `rights_verification_note`
-- `acquired_cost_amount`
-- `acquired_at`
-- `assigned_order_id`
+- `issued_batch_reference`
 - `created_at`
 - `updated_at`
 
-## 4. listings
-Represents the Telegram-facing sale listing tied to sellable inventory.
+## 4. offers
+Represents the Telegram-facing product.
 
 Purpose:
-- allow one product listing to point to one or more coupons of the same sale shape
+- describe the fixed merchant deal shown to the buyer
 
 Suggested fields:
 - `id`
+- `merchant_partner_id`
 - `merchant_name`
 - `title`
 - `description`
-- `coupon_value_amount`
-- `sale_price_amount`
+- `price_amount`
 - `currency_code`
-- `expiry_summary`
-- `terms_summary`
-- `redemption_instructions`
-- `final_sale_disclosure_text`
+- `payment_link`
+- `merchant_disclosure_text`
+- `redemption_terms`
+- `support_contact`
 - `status` (`draft`, `active`, `paused`, `sold_out`, `expired`, `removed`)
-- `source_id`
-- `created_by_admin_id`
 - `published_at`
 - `created_at`
 - `updated_at`
+
+Notes:
+- `merchant_disclosure_text` may be inherited from the partner by default but should be snapshotted on the offer if per-offer wording is needed
 
 ## 5. orders
 Represents a user purchase attempt.
@@ -112,57 +106,50 @@ Represents a user purchase attempt.
 Suggested fields:
 - `id`
 - `user_id`
-- `listing_id`
-- `coupon_id`
+- `offer_id`
+- `predefined_code_id`
 - `order_number`
-- `status` (`draft`, `pending_payment`, `paid`, `delivery_pending`, `delivered`, `failed`, `cancelled`, `disputed`)
+- `status` (`draft`, `awaiting_payment`, `payment_claim_submitted`, `payment_verified`, `coupon_sent`, `payment_rejected`, `cancelled`, `support_required`)
 - `currency_code`
-- `sale_price_amount`
-- `provider_checkout_reference`
-- `final_sale_acknowledged_at`
-- `failure_reason`
+- `price_amount`
+- `paybox_payment_link`
 - `placed_at`
+- `verified_at`
 - `delivered_at`
+- `failure_reason`
 - `created_at`
 - `updated_at`
 
 Notes:
-- `coupon_id` may remain null until payment succeeds and inventory is assigned
+- `predefined_code_id` stays null until manual approval succeeds
 
-## 6. payments
-Represents payment attempts related to an order.
+## 6. manual_payment_claims
+Represents a buyer-submitted payment claim.
 
 Suggested fields:
 - `id`
 - `order_id`
-- `provider_name`
-- `provider_payment_id`
-- `provider_checkout_id`
-- `status` (`pending`, `authorized`, `captured`, `failed`, `cancelled`, `chargeback`, `disputed`)
-- `amount`
-- `currency_code`
-- `failure_code`
-- `failure_message`
-- `captured_at`
+- `payer_username`
+- `claimed_amount`
+- `submitted_at`
+- `review_status` (`pending_review`, `verified`, `rejected`)
+- `reviewed_by`
+- `reviewed_at`
+- `review_note`
 - `created_at`
 - `updated_at`
-
-Notes:
-- raw card data should never be stored
-- payment provider remains the source of truth for card handling
-- for the initial PayPal flow, `provider_checkout_id` should carry the PayPal order ID and `provider_payment_id` should carry the PayPal capture ID when available
 
 ## 7. coupon_deliveries
-Represents the act of releasing a coupon to the user after payment.
+Represents the act of sending a predefined code to the user after approval.
 
 Purpose:
-- separate payment success from delivery success
-- provide evidence in disputes
+- separate payment verification from delivery success
+- provide evidence in support disputes
 
 Suggested fields:
 - `id`
 - `order_id`
-- `coupon_id`
+- `predefined_code_id`
 - `delivery_channel` (`telegram_bot`)
 - `status` (`pending`, `sent`, `confirmed`, `failed`)
 - `telegram_message_id`
@@ -180,8 +167,9 @@ Suggested fields:
 - `id`
 - `user_id`
 - `order_id`
-- `coupon_id`
-- `case_type` (`invalid_coupon`, `delivery_issue`, `payment_issue`, `chargeback_review`, `other`)
+- `predefined_code_id`
+- `payment_claim_id`
+- `case_type` (`payment_mismatch`, `invalid_code`, `delivery_issue`, `merchant_issue`, `other`)
 - `status` (`open`, `in_progress`, `waiting_on_user`, `resolved`, `closed`)
 - `priority` (`low`, `medium`, `high`)
 - `summary`
@@ -196,7 +184,7 @@ Captures sensitive internal actions for auditability.
 Suggested fields:
 - `id`
 - `admin_user_id`
-- `entity_type` (`coupon`, `listing`, `order`, `payment`, `support_case`, `source`)
+- `entity_type` (`merchant_partner`, `offer`, `predefined_code`, `order`, `manual_payment_claim`, `support_case`)
 - `entity_id`
 - `action_type`
 - `before_state_json`
@@ -205,34 +193,31 @@ Suggested fields:
 - `created_at`
 
 ## Relationship Summary
-- `coupon_sources` 1-to-many `coupons`
-- `coupon_sources` 1-to-many `listings`
+- `merchant_partners` 1-to-many `offers`
+- `merchant_partners` 1-to-many `predefined_codes`
 - `users` 1-to-many `orders`
-- `listings` 1-to-many `orders`
-- `orders` optionally belongs-to `coupons`
-- `payments` belongs-to `orders`
+- `offers` 1-to-many `orders`
+- `orders` optionally belongs-to `predefined_codes`
+- `manual_payment_claims` belongs-to `orders`
 - `coupon_deliveries` belongs-to `orders`
-- `coupon_deliveries` belongs-to `coupons`
-- `support_cases` may reference `orders` and `coupons`
+- `coupon_deliveries` belongs-to `predefined_codes`
+- `support_cases` may reference `orders`, `predefined_codes`, and `manual_payment_claims`
 
 ## Recommended MVP Tables
 - users
-- coupon_sources
-- coupons
-- listings
+- merchant_partners
+- offers
+- predefined_codes
 - orders
-- payments
+- manual_payment_claims
 - coupon_deliveries
 - support_cases
 - admin_actions
 
-## Explicit Non-Table for MVP
-No dedicated `refunds` table is recommended in the initial MVP because the product policy is that no refunds are available. If the business later changes policy or needs structured refund processing, that table can be added then.
-
 ## Key Design Decisions
-- `coupons` represent real owned inventory.
-- `listings` represent sellable Telegram products.
+- `merchant_partners` represent the business relationship.
+- `offers` represent sellable Telegram products.
+- `predefined_codes` represent individual fulfillment units.
 - `orders` represent purchase attempts.
-- `payments` represent provider-confirmed money movement.
-- `coupon_deliveries` represent actual release of coupon content to the user.
-- final-sale acknowledgement should be stored with the order.
+- `manual_payment_claims` represent buyer-submitted proof data awaiting review.
+- `coupon_deliveries` represent actual release of the code.

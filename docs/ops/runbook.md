@@ -1,5 +1,10 @@
 # Runbook
 
+Legacy note:
+This runbook still describes the older automated PayPal-oriented flow.
+It is not the source of truth for the current manual PayBox v1 architecture.
+Use `docs/architecture/` and `docs/prd/mvp_prd.md` for the target operating model.
+
 ## Operational priorities
 - payment traceability
 - fulfillment traceability

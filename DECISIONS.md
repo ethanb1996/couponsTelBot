@@ -23,3 +23,10 @@
 - Reason: Improves quality, speed, and consistency.
 - Consequences: All major decisions should map to docs and implementation plans.
 - Owner: Repo owner
+
+### 2026-05-21 - Direct merchant manual PayBox MVP
+- Decision: Reframe the MVP around direct merchant-partner offers, manual PayBox verification, and predefined code delivery.
+- Context: The previous resale-oriented model created legal and product risk and no longer matches the intended go-to-market motion.
+- Reason: This is the fastest compliant-enough validation path for selling predefined offers from small businesses directly.
+- Consequences: Architecture, data model, bot flow, and admin workflows should center on manual payment claims and operator approval rather than automated provider webhooks.
+- Owner: Repo owner + Architect

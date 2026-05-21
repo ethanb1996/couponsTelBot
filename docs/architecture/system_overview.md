@@ -4,150 +4,150 @@ Status: Draft
 Owner: Architect Agent
 
 ## Objective
-Define an MVP-first architecture for a Telegram-based coupon resale product in Israel that:
-- is simple for a small team to operate
-- supports pre-bought inventory, payment, and delivery
-- avoids risky automation dependencies
-- keeps trust, auditability, and fast issue handling at the center
+Define an MVP-first architecture for a Telegram-based coupon sales product in Israel that:
+- sells fixed offers from small businesses that work with us directly
+- uses PayBox as the initial payment channel
+- verifies payment manually through buyer-submitted PayBox usernames
+- delivers predefined coupon codes after operator approval
+- keeps auditability, trust, and operational simplicity at the center
 
-The architecture is intentionally optimized for a narrow direct-sale loop:
+The architecture is intentionally optimized for a narrow manual-first loop:
 
-1. store pre-bought coupon inventory
-2. list inventory in Telegram
-3. accept payment in ILS
-4. deliver the coupon to the user
+1. create merchant partner records
+2. publish predefined offers in Telegram
+3. accept payment through merchant-approved PayBox links
+4. collect a payment claim from the buyer
+5. verify payment manually
+6. deliver a predefined code in Telegram
 
 ## Architectural Principles
 - Telegram is the primary user surface.
-- Controlled inventory is a feature, not a temporary workaround.
-- Every sellable coupon must have a clear source and audit trail.
-- Internal automation is acceptable; external risky automation is not.
-- Keep modules loosely coupled enough to evolve, but not so fragmented that MVP operations become hard to run.
-- Prefer a small number of dependable services over a microservice-heavy design.
+- Merchant authorization is a feature, not a nice-to-have.
+- Every sellable offer must have a clear merchant owner and audit trail.
+- Manual operations are acceptable in MVP if they reduce launch complexity.
+- Prefer a small number of dependable modules over automation-heavy design.
+- Separate user-visible offer state from payment review state and fulfillment state.
 
 ## MVP System Shape
 The MVP should use a modular monolith backend with a few clearly separated surfaces:
 
-1. Telegram delivery surface for users
-2. Admin surface for operators
-3. API/backend as the system of record and business rules layer
-4. Data store for users, coupons, orders, payments, and audit history
-5. Background jobs for safe internal tasks such as payment reconciliation and expiry handling
-
-This provides enough separation for clarity without introducing distributed-system complexity too early.
+1. Telegram bot for buyers
+2. Admin workflow surface for operators
+3. Backend as the system of record and business rules layer
+4. Relational database for users, merchant partners, offers, orders, payment claims, codes, and support history
+5. Lightweight background jobs only for non-critical cleanup and reminders
 
 ## High-Level Flow
 
-### Inventory Intake and Listing
-1. Operator acquires coupon inventory from an approved source.
-2. Operator verifies value, expiry, transferability, and resale metadata.
-3. Operator stores the coupon securely in the admin interface.
-4. API validates inventory and stores it in the database.
-5. Operator creates a Telegram listing linked to available inventory.
-6. Listing is marked `draft`, `active`, `paused`, `sold_out`, `expired`, or `removed`.
+### Offer Setup
+1. Operator creates a merchant partner record.
+2. Operator creates a fixed offer tied to that merchant.
+3. Operator adds merchant disclosure text, redemption terms, support contact, and PayBox payment link.
+4. Operator loads predefined coupon codes for that offer.
+5. Offer is marked `draft`, `active`, `paused`, `sold_out`, `expired`, or `removed`.
 
 ### User Purchase Flow
-1. User starts the bot and views active coupon listings.
-2. User opens a listing detail view.
-3. User sees sale price, coupon value, expiry, delivery terms, and explicit no-refund policy.
-4. User confirms purchase and receives a PayPal checkout link.
-5. User completes payment in PayPal in ILS.
-6. Backend verifies the PayPal webhook and captures the approved PayPal order.
-7. Backend assigns one coupon from inventory to the order.
-8. Bot delivers the coupon to the user in Telegram.
+1. User opens the bot and views active offers.
+2. User opens an offer detail view.
+3. User sees price, merchant disclosure, redemption terms, support contact, and payment instructions.
+4. User taps through to the PayBox link and completes payment outside Telegram.
+5. User returns to the bot and submits their PayBox username.
+6. Backend records a manual payment claim.
+7. Bot alerts the admin for manual review.
+8. Admin verifies the payment and approves or rejects the claim.
+9. After approval, backend assigns one predefined code and the bot delivers it to the user.
 
-### Feedback and Issue Handling
-1. User reports an invalid coupon, delivery issue, or payment issue.
-2. API records the issue and adds it to an internal review queue.
-3. Operator reviews the report in admin.
-4. Operator checks coupon, order, payment, and delivery history.
-5. Operator responds to the user and records the outcome.
+### Issue Handling
+1. User reports an invalid code, payment mismatch, or redemption issue.
+2. API records a support case linked to the order, payment claim, and code when available.
+3. Operator reviews the full history in admin.
+4. Operator responds manually and records the outcome.
 
 ## Proposed Deployment Topology
 
 ### User-Facing Surfaces
 - Telegram Bot
-- Optional Telegram Channel used for acquisition or announcement
-- Admin Web UI for internal operators only
+- Optional Telegram channel for acquisition or announcement
+- Admin web UI for setup, audit, and support history
 
 ### Backend Layer
 - Single backend application exposing:
-  - bot webhook handlers
+  - Telegram webhook handlers
   - admin APIs
-  - internal services for inventory, order, payment, delivery, and audit logging
+  - payment-claim review actions
+  - internal services for offers, codes, orders, support, and audit logging
 
 ### Data Layer
 - Relational database as the source of truth
-- Optional cache only if needed later; not required for MVP
+- No cache required for MVP
 
 ### Internal Processing
-- Job runner or scheduled worker for:
-  - inventory expiry transitions
-  - payment reconciliation
-  - undelivered-order checks
-  - summary analytics rollups
+- Job runner or scheduler for:
+  - expiring offers and codes
+  - reminding operators about pending payment claims
+  - flagging orders stuck without review or fulfillment
 
 ### External Dependencies
 - Telegram Bot API
-- PayPal as the initial payment provider that accepts ILS
-- analytics/logging stack
+- PayBox links managed by the business or merchant
+- logging and analytics stack
 
 Explicitly excluded from MVP architecture:
+- automated provider webhooks as the primary payment path
+- merchant self-serve portals
+- third-party marketplace workflows
 - browser automation against merchant systems
-- scraping pipelines against protected sites
-- third-party coupon acquisition automation
 - automated refund engine
 
 ## Core Domains
 
-### 1. Listing Catalog
-Maintains the canonical record of every listing, including:
-- title and merchant name
-- coupon value
-- sale price
-- expiry data
-- restrictions
-- source provenance notes
-- listing status
+### 1. Merchant Partners
+Maintains the canonical record of each small business, including:
+- business name
+- contact reference
+- status
+- approval notes
+- disclosure requirements
 
-### 2. Inventory Governance
-Handles the safety and trust layer:
-- operator review state
-- rights/disclosure checks
-- listing/pause/remove decisions
-- complaint handling
-- audit trail of changes
+### 2. Offers And Codes
+Maintains the sale catalog:
+- fixed offer title and description
+- price in ILS
+- payment link
+- redemption terms
+- predefined code pool
+- publication and availability status
 
-### 3. Telegram Experience
-Handles user-facing flows:
-- listing view
-- listing detail view
-- checkout entry point
-- post-payment coupon delivery
-- complaint submission
+### 3. Orders And Payment Claims
+Tracks the purchase loop:
+- user starts purchase
+- order enters awaiting-payment state
+- buyer submits PayBox username
+- claim enters manual review
+- order is approved or rejected
 
-### 4. Ops and Insights
-Supports the internal feedback loop:
-- inventory quality tracking
-- payment and delivery reporting
-- complaint metrics
-- support review
+### 4. Delivery And Support
+Handles fulfillment and issue review:
+- assign one predefined code per approved order
+- send code in Telegram
+- store delivery evidence
+- log support cases
 
 ## Integration Boundaries
 
 ### Telegram Bot <-> Backend API
 Boundary:
-- Telegram sends webhook updates to the backend.
-- Backend decides all business logic and state transitions.
+- Telegram sends user updates to the backend.
+- Backend decides all business rules and status transitions.
 
 Reason:
-- keeps Telegram-specific handling thin
-- allows the same listing, order, and delivery state to drive bot and admin behavior
+- keeps bot logic thin
+- makes admin and bot rely on the same source of truth
 
 ### Admin UI <-> Backend API
 Boundary:
 - Admin never writes directly to the database.
-- All changes go through backend validation and audit logging.
+- All approval, rejection, publish, and support actions go through backend validation and audit logging.
 
 Reason:
 - preserves consistent workflows
@@ -155,184 +155,99 @@ Reason:
 
 ### Backend API <-> Database
 Boundary:
-- Database is the source of truth for listings, coupons, orders, payments, reports, and audit entries.
-- Business rules live in the application layer, not in admin-only scripts.
+- Database is the source of truth for merchant partners, offers, codes, orders, payment claims, deliveries, and support cases.
+- Business rules live in the application layer.
 
 Reason:
 - easier to evolve safely
 - clearer operational debugging
 
-### Backend <-> External Offer Sources
+### Backend <-> Payment Channel
 Boundary:
-- MVP does not integrate directly into merchant systems for automated acquisition.
-- External sources are represented as supplier records and manual inventory intake.
+- Backend does not authoritatively verify payment from a provider webhook in v1.
+- Backend records buyer claims and admin review outcomes.
 
 Reason:
-- reduces ToS, legal, and fragility risk
-- keeps supplier-side failures from breaking the core app
-
-### Backend <-> Payment Provider
-Boundary:
-- backend creates PayPal checkout orders and approval links
-- PayPal owns card and wallet handling, including card and Apple Pay flows exposed by the merchant account
-- backend verifies PayPal webhooks and trusts only PayPal-confirmed payment success for coupon delivery
-
-Reason:
-- reduces PCI scope
-- keeps delivery gated behind authoritative payment state
-
-### Backend <-> Analytics / Logging
-Boundary:
-- product events and operational logs are emitted asynchronously where possible
-- analytics failure should not block publishing or user flows
-
-Reason:
-- observability matters, but should not take down the product
+- fastest path to launch
+- keeps the initial payment loop simple and manual
 
 ## Failure Points
 
-### Telegram Delivery Failure
+### Unverified Payment Claim
 Examples:
-- webhook outage
-- Telegram API errors
-- malformed message payloads
+- buyer enters wrong PayBox username
+- buyer claims to have paid but cannot be matched
 
 Impact:
-- users do not receive responses or delivered coupons
+- manual support load and delayed fulfillment
 
 Mitigation:
-- retryable outbound delivery
-- structured error logging
-- ability to re-send a delivered coupon from admin when appropriate
+- clear claim instructions
+- pending-review queue
+- reject and retry workflow
 
-### Bad Inventory Data Entered by Operators
+### Admin Approval Delay
 Examples:
-- missing expiry
-- wrong coupon value
-- already-used inventory
-- incorrect source labeling
+- operator is offline
+- pending claims queue grows too fast
 
 Impact:
-- direct trust damage and support load
+- users wait too long after payment
+
+Mitigation:
+- launch with low volume
+- admin Telegram alerts
+- reminders for stale claims
+
+### Offer Or Code Misconfiguration
+Examples:
+- wrong PayBox link
+- no available predefined codes
+- unclear redemption terms
+
+Impact:
+- broken purchase flow or poor user trust
 
 Mitigation:
 - required-field validation
-- intake checklist
-- inventory preview
-- quick pause/remove flow
-
-### Payment Success but Coupon Delivery Fails
-Examples:
-- bot send error
-- assignment logic failure
-- coupon marked sold but not delivered
-
-Impact:
-- direct purchase failure and complaint risk
-
-Mitigation:
-- make delivery idempotent
-- store assignment and delivery state separately
-- alert on paid but undelivered orders
+- pre-publish checklist
+- sold-out or paused state controls
 
 ### Single Backend Failure
 Examples:
-- application crash
 - bad deployment
-- configuration error
+- config error
+- application crash
 
 Impact:
-- bot, admin, and operational tools can all be affected
+- bot and admin flow can both fail
 
 Mitigation:
-- simple deployment with health checks
+- simple deployment
+- health checks
 - rollback path
-- minimal moving parts in MVP
-
-### Database Failure or Corruption
-Examples:
-- connectivity issues
-- migration mistakes
-- accidental destructive edits
-
-Impact:
-- core system of record becomes unavailable
-
-Mitigation:
-- backups
-- controlled migrations
-- admin writes only through API
-- audit history for recovery context
-
-### Human Operations Bottleneck
-Examples:
-- too much inventory to verify manually
-- too many user complaints
-- insufficient support coverage
-
-Impact:
-- quality drops before the product is technically broken
-
-Mitigation:
-- narrow category scope
-- limit publishing volume
-- instrument operator workload
-- expand only after stable throughput is proven
-
-### Supplier or Partner Failure
-Examples:
-- supplier inventory is invalid
-- source quality degrades suddenly
-- transferability assumptions prove wrong
-
-Impact:
-- users buy invalid or unusable coupons despite the app functioning correctly
-
-Mitigation:
-- source-quality scoring
-- partner/source audit history
-- fast pause/remove controls
-- no hard dependency on one supplier for core functionality
-
-### Chargebacks and No-Refund Pressure
-Examples:
-- user disputes a valid delivered purchase
-- user claims coupon failed
-- payment provider allows chargeback even when policy says no refunds
-
-Impact:
-- financial loss and account risk with payment provider
-
-Mitigation:
-- clear pre-purchase disclosure
-- store delivery evidence
-- store PayPal order and capture references
-- store coupon assignment evidence
-- keep complaint and dispute logs
 
 ## Operational Simplicity Decisions
-- Use one backend application for MVP instead of splitting services.
+- Use one backend application for MVP.
 - Keep Telegram and admin on the same business rules layer.
-- Build payment and delivery into MVP, because they are the core loop.
-- Do not build automated merchant integrations into MVP.
-- Store coupon, order, payment, and delivery state centrally.
-- Favor explicit status transitions over hidden side effects.
+- Build around manual payment verification instead of provider automation.
+- Keep offer setup and support logging in the initial version.
+- Store order, claim, fulfillment, and support state centrally.
+- Favor explicit state transitions over hidden side effects.
 
 ## Deferred Architecture
 These are intentionally deferred until later phases:
-- self-serve merchant portal
-- automated refund orchestration
+- merchant self-serve portal
+- automated provider reconciliation
 - marketplace workflows
-- user-to-user inventory submission with public listing
-- exclusive partner APIs
-- complex partner acquisition automation
+- user-submitted offers
+- complex revenue-share settlement tooling
 
 ## Recommended MVP Technology Shape
-The exact stack can vary, but the architectural shape should be:
 - one backend service for bot logic, admin APIs, and core domain logic
 - one admin web app
 - one relational database
-- one job runner or scheduler
+- one lightweight job runner or scheduler
 - Telegram as the primary delivery client
 
-This keeps the architecture aligned with the MVP product strategy: low-risk, auditable, manual-first, and fast to iterate.
+This keeps the architecture aligned with the MVP strategy: direct merchant offers, manual-first verification, auditable fulfillment, and fast iteration.
