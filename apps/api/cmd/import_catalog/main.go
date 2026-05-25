@@ -25,11 +25,11 @@ func main() {
 }
 
 func run() error {
-	defaultPayPalFeeRate, err := floatEnvWithDefault("PAYPAL_FEE_PERCENT_RATE", 0)
+	defaultPaymentFeeRate, err := floatEnvWithDefault("PAYMENT_FEE_PERCENT_RATE", 0)
 	if err != nil {
 		return err
 	}
-	defaultPayPalFixedFee, err := floatEnvWithDefault("PAYPAL_FIXED_FEE_AMOUNT", 0)
+	defaultPaymentFixedFee, err := floatEnvWithDefault("PAYMENT_FIXED_FEE_AMOUNT", 0)
 	if err != nil {
 		return err
 	}
@@ -37,8 +37,8 @@ func run() error {
 	inputPath := flag.String("input", filepath.Clean("data/GetCategoryById_6982.txt"), "path to HAR export file")
 	photosDir := flag.String("photos-dir", filepath.Clean("data/photos"), "directory for downloaded product photos")
 	dryRun := flag.Bool("dry-run", false, "parse the HAR and report counts without downloading or writing to the database")
-	payPalFeeRate := flag.Float64("paypal-fee-rate", defaultPayPalFeeRate, "PayPal percentage fee as a decimal rate, for example 0.0349 for 3.49%")
-	payPalFixedFee := flag.Float64("paypal-fixed-fee", defaultPayPalFixedFee, "PayPal fixed fee in ILS major units, for example 0.49")
+	paymentFeeRate := flag.Float64("payment-fee-rate", defaultPaymentFeeRate, "payment percentage fee as a decimal rate, for example 0.0349 for 3.49%")
+	paymentFixedFee := flag.Float64("payment-fixed-fee", defaultPaymentFixedFee, "payment fixed fee in ILS major units, for example 0.49")
 	flag.Parse()
 
 	workingDir, err := os.Getwd()
@@ -80,11 +80,11 @@ func run() error {
 	defer db.Close()
 
 	summary, err := catalogimport.Run(ctx, db, catalogimport.Options{
-		InputPath:            *inputPath,
-		PhotosDir:            *photosDir,
-		DryRun:               *dryRun,
-		PayPalPercentFeeRate: *payPalFeeRate,
-		PayPalFixedFeeAmount: majorUnitsToMinor(*payPalFixedFee),
+		InputPath:             *inputPath,
+		PhotosDir:             *photosDir,
+		DryRun:                *dryRun,
+		PaymentPercentFeeRate: *paymentFeeRate,
+		PaymentFixedFeeAmount: majorUnitsToMinor(*paymentFixedFee),
 	})
 	if err != nil {
 		return err

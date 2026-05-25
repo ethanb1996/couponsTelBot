@@ -75,7 +75,7 @@ func TestParseHARExpandsMultiPriceCategory(t *testing.T) {
 	}
 }
 
-func TestExpandCategoryComputesResalePriceWithDynamicProfitAndPayPalFees(t *testing.T) {
+func TestExpandCategoryComputesResalePriceWithDynamicProfitAndPaymentFees(t *testing.T) {
 	category := sourceCategory{
 		CategoryID:   4244,
 		CategoryName: "Gift Voucher 150",
@@ -94,8 +94,8 @@ func TestExpandCategoryComputesResalePriceWithDynamicProfitAndPayPalFees(t *test
 	}
 
 	records, rejectedImportKeys, err := expandCategory(category, category, true, Options{
-		PayPalPercentFeeRate: 0.0349,
-		PayPalFixedFeeAmount: 49,
+		PaymentPercentFeeRate: 0.0349,
+		PaymentFixedFeeAmount: 49,
 	})
 	if err != nil {
 		t.Fatalf("expandCategory returned error: %v", err)
@@ -181,8 +181,8 @@ func TestExpandCategoryRejectsListingsWhoseResalePriceReachesCouponValue(t *test
 	}
 
 	records, rejectedImportKeys, err := expandCategory(category, category, true, Options{
-		PayPalPercentFeeRate: 0.0349,
-		PayPalFixedFeeAmount: 49,
+		PaymentPercentFeeRate: 0.0349,
+		PaymentFixedFeeAmount: 49,
 	})
 	if err != nil {
 		t.Fatalf("expandCategory returned error: %v", err)

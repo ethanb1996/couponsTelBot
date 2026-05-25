@@ -46,12 +46,12 @@ var (
 )
 
 type Options struct {
-	InputPath            string
-	PhotosDir            string
-	DryRun               bool
-	HTTPClient           *http.Client
-	PayPalPercentFeeRate float64
-	PayPalFixedFeeAmount int64
+	InputPath             string
+	PhotosDir             string
+	DryRun                bool
+	HTTPClient            *http.Client
+	PaymentPercentFeeRate float64
+	PaymentFixedFeeAmount int64
 }
 
 type Summary struct {
@@ -428,8 +428,8 @@ func expandCategory(category sourceCategory, detailCategory sourceCategory, deta
 		resellPriceAmount, ok := calculateResalePriceAmount(
 			couponValueAmount,
 			sourceCostAmount,
-			options.PayPalPercentFeeRate,
-			options.PayPalFixedFeeAmount,
+			options.PaymentPercentFeeRate,
+			options.PaymentFixedFeeAmount,
 		)
 		if !ok || resellPriceAmount >= couponValueAmount {
 			rejectedImportKeys = append(rejectedImportKeys, importKey)

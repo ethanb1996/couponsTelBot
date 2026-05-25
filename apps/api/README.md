@@ -4,10 +4,9 @@ Single Go service for the coupon sales MVP.
 
 It owns:
 - Telegram bot webhooks
-- payment webhooks
-- PayPal checkout handoff and verified payment callbacks
+- manual PayBox payment claims
 - embedded admin pages
-- inventory, listing, order, payment, and delivery state
+- offer, predefined code, order, payment claim, QR delivery, and redemption state
 
 ## Database
 
@@ -30,37 +29,16 @@ Run the service from the repo root so `apps/api` can pick up the shared `.env` f
 
 The API accepts a plain PostgreSQL URL and uses `pgxpool` directly. No ORM or Supabase SDK is required.
 
-## PayPal
+## PayBox MVP Flow
 
-The MVP payment flow uses PayPal-hosted checkout links.
+The MVP payment flow is manual PayBox approval:
 
-- The bot reserves one coupon before showing the PayPal approval link.
-- The user sees a checkout-ready message only after that reservation succeeds.
-- The reservation is temporary and expires automatically if payment is not confirmed in time.
-- Users pay on PayPal with whatever funding sources the merchant account exposes, such as card or wallet.
-- The backend verifies PayPal webhook signatures through PayPal's verification API.
-- Coupon delivery happens only after a verified PayPal success event for the same reserved order.
-- If a late payment arrives after the checkout hold has already expired, the payment is recorded and escalated for manual refund or support review instead of auto-delivering a different coupon.
-
-Required payment settings:
-
-- `PAYMENT_PROVIDER_NAME=paypal`
-- `PAYMENT_PROVIDER_CLIENT_ID`
-- `PAYMENT_PROVIDER_SECRET`
-- `PAYMENT_PROVIDER_BASE_URL`
-- `PAYMENT_PROVIDER_WEBHOOK_ID`
-
-PayPal base URL values:
-
-- sandbox: `https://api-m.sandbox.paypal.com`
-- live: `https://api-m.paypal.com`
-
-Webhook expectations:
-
-- subscribe the PayPal webhook to the events needed for hosted checkout fulfillment
-- include at least `CHECKOUT.ORDER.APPROVED` and `PAYMENT.CAPTURE.COMPLETED`
-- point the webhook at `/webhooks/payments/paypal`
-- configure the webhook ID in `PAYMENT_PROVIDER_WEBHOOK_ID`
+- `/start` shows the active offer catalog.
+- Buyer taps Buy and receives the merchant PayBox payment link.
+- Buyer uploads the PayBox payment screenshot in the Telegram chat.
+- Admin reviews pending claims at `/admin/payments`.
+- Approval assigns a predefined code, sends a QR code to the buyer, and records delivery.
+- Merchant scans the QR code, which calls `/api/redemptions/scan/{token}` and records redemption in the database.
 
 ## Supabase Notes
 
@@ -108,29 +86,29 @@ To import external catalog listings from a HAR export and download their primary
 go run ./apps/api/cmd/import_catalog -input data/GetCategoryById_6982.txt -photos-dir data/photos
 ```
 
-If you want the importer to compute a resale price from the source cost while covering PayPal fees, pass the fee inputs:
+If you want the importer to compute a resale price from the source cost while covering payment fees, pass the fee inputs:
 
 ```powershell
 go run ./apps/api/cmd/import_catalog `
   -input data/GetCategoryById_6982.txt `
   -photos-dir data/photos `
-  -paypal-fee-rate 0.0349 `
-  -paypal-fixed-fee 0.49
+  -payment-fee-rate 0.0349 `
+  -payment-fixed-fee 0.49
 ```
 
 You can also set these in `.env` so the importer uses them by default:
 
-- `PAYPAL_FEE_PERCENT_RATE=0.0349`
-- `PAYPAL_FIXED_FEE_AMOUNT=0.49`
+- `PAYMENT_FEE_PERCENT_RATE=0.0349`
+- `PAYMENT_FIXED_FEE_AMOUNT=0.49`
 
 The importer uses this formula:
 
 - `profit = (coupon_value_amount - sale_price_amount) / 2`
-- `sale_price_amount - source_cost_amount - paypal_fee = profit`
+- `sale_price_amount - source_cost_amount - payment_fee = profit`
 
 That resolves to:
 
-- `sale_price_amount = (coupon_value_amount + 2*source_cost_amount + 2*paypal_fixed_fee) / (3 - 2*paypal_fee_rate)`
+- `sale_price_amount = (coupon_value_amount + 2*source_cost_amount + 2*payment_fixed_fee) / (3 - 2*payment_fee_rate)`
 
 The importer stores the original HAR supplier price in `sale_price_amount` and the computed customer-facing price in `resell_price_amount`.
 
@@ -159,16 +137,7 @@ The API now runs a small in-process ops loop for launch readiness:
 
 - `OPS_SWEEP_INTERVAL` controls how often the service sweeps expired coupons and listing statuses.
 - `OPS_DELIVERY_ALERT_AFTER` controls when paid-but-undelivered orders are escalated into support cases.
-- `OPS_RECONCILE_AFTER` controls when stale PayPal checkouts are rechecked for delayed callbacks.
-- `OPS_CHECKOUT_HOLD_DURATION` controls how long a reserved coupon stays on hold while the user completes PayPal checkout.
 - `OPS_BATCH_SIZE` controls how many orders each ops cycle inspects per category.
-
-Checkout-hold behavior:
-
-- creating a checkout now reserves exactly one `available` coupon and marks it `reserved`
-- sold-out listings no longer show buy actions in Telegram
-- stale `pending_payment` orders older than `OPS_CHECKOUT_HOLD_DURATION` are cancelled automatically
-- releasing a stale hold returns the coupon to `available`, clears `orders.coupon_id`, and stores `failure_reason=checkout_hold_expired`
 
 Admin operations now keep audit rows for source changes, listing changes, coupon inventory changes, and support outcomes. The dashboard also highlights:
 
