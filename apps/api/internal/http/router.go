@@ -69,6 +69,8 @@ func NewRouter(deps Dependencies) (Router, error) {
 		http.Redirect(w, r, "/admin/", http.StatusSeeOther)
 	})
 	mux.HandleFunc("/webhooks/telegram", telegramHandler.ServeHTTP)
+	mux.HandleFunc("/api/redemptions/scan", redemptionScanHandler(deps.Store))
+	mux.HandleFunc("/api/redemptions/scan/", redemptionScanByTokenHandler(deps.Store))
 
 	return Router{
 		Handler: Chain(
