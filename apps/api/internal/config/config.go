@@ -27,6 +27,7 @@ type Config struct {
 	DatabaseQueryExecMode     string
 	TelegramBotToken          string
 	TelegramWebhookSecret     string
+	TelegramAdminUserIDs      []int64
 	AdminBasicAuthUser        string
 	AdminBasicAuthPass        string
 	CouponEncryptionKey       string
@@ -97,6 +98,11 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 
+	telegramAdminUserIDs, err := int64ListEnv("TELEGRAM_ADMIN_USER_IDS")
+	if err != nil {
+		return Config{}, err
+	}
+
 	cfg := Config{
 		AppEnv:                    envWithDefault("APP_ENV", "development"),
 		Port:                      envWithDefault("PORT", "8080"),
@@ -112,6 +118,7 @@ func Load() (Config, error) {
 		DatabaseQueryExecMode:     strings.ToLower(envWithDefault("DATABASE_QUERY_EXEC_MODE", "exec")),
 		TelegramBotToken:          strings.TrimSpace(os.Getenv("TELEGRAM_BOT_TOKEN")),
 		TelegramWebhookSecret:     strings.TrimSpace(os.Getenv("TELEGRAM_WEBHOOK_SECRET")),
+		TelegramAdminUserIDs:      telegramAdminUserIDs,
 		AdminBasicAuthUser:        strings.TrimSpace(os.Getenv("ADMIN_BASIC_AUTH_USER")),
 		AdminBasicAuthPass:        strings.TrimSpace(os.Getenv("ADMIN_BASIC_AUTH_PASS")),
 		CouponEncryptionKey:       strings.TrimSpace(os.Getenv("COUPON_ENCRYPTION_KEY")),
@@ -254,6 +261,29 @@ func intEnvWithDefault(key string, fallback int) (int, error) {
 	}
 
 	return parsed, nil
+}
+
+func int64ListEnv(key string) ([]int64, error) {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return nil, nil
+	}
+
+	parts := strings.Split(value, ",")
+	values := make([]int64, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		parsed, err := strconv.ParseInt(part, 10, 64)
+		if err != nil || parsed <= 0 {
+			return nil, fmt.Errorf("%s must contain comma-separated positive integers", key)
+		}
+		values = append(values, parsed)
+	}
+
+	return values, nil
 }
 
 func durationEnvWithDefault(key string, fallback time.Duration) (time.Duration, error) {

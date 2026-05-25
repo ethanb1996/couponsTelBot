@@ -143,6 +143,9 @@ func TestPayBoxServiceApproveClaimDeliversCodeAndNotifiesAdmin(t *testing.T) {
 	if len(admin.approvedResults) != 1 || admin.approvedResults[0].Order.ID != 501 {
 		t.Fatalf("expected admin approval notification, got %+v", admin.approvedResults)
 	}
+	if len(payboxStore.recordedActions) != 1 || payboxStore.recordedActions[0].ActionType != "approve_payment_claim" {
+		t.Fatalf("expected approval audit action, got %+v", payboxStore.recordedActions)
+	}
 }
 
 func TestPayBoxServiceApproveClaimWithoutCodeNotifiesSupportState(t *testing.T) {
@@ -200,6 +203,9 @@ func TestPayBoxServiceRejectClaimNotifiesBuyerAndAdmin(t *testing.T) {
 	}
 	if len(admin.rejectedClaims) != 1 {
 		t.Fatalf("expected admin rejection notification, got %+v", admin.rejectedClaims)
+	}
+	if len(payboxStore.recordedActions) != 1 || payboxStore.recordedActions[0].ActionType != "reject_payment_claim" {
+		t.Fatalf("expected rejection audit action, got %+v", payboxStore.recordedActions)
 	}
 }
 
@@ -276,6 +282,7 @@ type stubPayBoxStore struct {
 	reviewedClaim     store.ReviewManualPaymentClaimParams
 	recordedDelivery  store.RecordPredefinedCodeDeliveryEventParams
 	createdRedemption store.CreateCouponRedemptionParams
+	recordedActions   []store.RecordAdminActionParams
 	pendingClaims     []store.ManualPaymentClaim
 }
 
@@ -325,6 +332,11 @@ func (s *stubPayBoxStore) RecordPredefinedCodeDeliveryEvent(ctx context.Context,
 		return s.delivery, nil
 	}
 	return store.MVPDelivery{ID: 1, OrderID: params.OrderID, PredefinedCodeID: params.PredefinedCodeID, Status: params.Status}, nil
+}
+
+func (s *stubPayBoxStore) RecordAdminAction(ctx context.Context, params store.RecordAdminActionParams) (store.AdminAction, error) {
+	s.recordedActions = append(s.recordedActions, params)
+	return store.AdminAction{ID: int64(len(s.recordedActions)), EntityType: params.EntityType, EntityID: params.EntityID, ActionType: params.ActionType}, nil
 }
 
 func (s *stubPayBoxStore) GetUserByID(ctx context.Context, userID int64) (store.User, error) {

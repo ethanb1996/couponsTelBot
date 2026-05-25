@@ -8,6 +8,7 @@ import (
 
 	"github.com/ethanb1996/couponsTelBot/apps/api/internal/config"
 	"github.com/ethanb1996/couponsTelBot/apps/api/internal/store"
+	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
 func TestListingOfferKeyboardHidesGetCouponForSoldOutListing(t *testing.T) {
@@ -225,6 +226,31 @@ func TestNormalizeTelegramTextRemovesInvalidUTF8(t *testing.T) {
 	}
 	if got != "ab" {
 		t.Fatalf("expected invalid byte to be removed, got %q", got)
+	}
+}
+
+func TestAdminPaymentClaimKeyboardUsesClaimCallbacks(t *testing.T) {
+	keyboard := adminPaymentClaimKeyboard(901)
+
+	if keyboard == nil || len(keyboard.InlineKeyboard) != 1 || len(keyboard.InlineKeyboard[0]) != 2 {
+		t.Fatalf("expected one row with approve/reject buttons, got %#v", keyboard)
+	}
+	if keyboard.InlineKeyboard[0][0].CallbackData == nil || *keyboard.InlineKeyboard[0][0].CallbackData != "admin_approve_claim:901" {
+		t.Fatalf("unexpected approve callback: %#v", keyboard.InlineKeyboard[0][0].CallbackData)
+	}
+	if keyboard.InlineKeyboard[0][1].CallbackData == nil || *keyboard.InlineKeyboard[0][1].CallbackData != "admin_reject_claim:901" {
+		t.Fatalf("unexpected reject callback: %#v", keyboard.InlineKeyboard[0][1].CallbackData)
+	}
+}
+
+func TestBotServiceChecksTelegramAdminAllowlist(t *testing.T) {
+	service := &BotService{adminUserIDSet: buildAdminUserIDSet([]int64{111, 222})}
+
+	if !service.isTelegramAdmin(&tgbotapi.User{ID: 111}) {
+		t.Fatal("expected user 111 to be admin")
+	}
+	if service.isTelegramAdmin(&tgbotapi.User{ID: 333}) {
+		t.Fatal("did not expect user 333 to be admin")
 	}
 }
 

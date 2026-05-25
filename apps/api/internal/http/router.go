@@ -46,6 +46,7 @@ func NewRouter(deps Dependencies) (Router, error) {
 		Logger:            deps.Logger,
 		Store:             deps.Store,
 		Messenger:         botService,
+		AdminNotifier:     botService,
 		CodeRenderer:      services.MaskedPredefinedCodeRenderer{},
 		QRRenderer:        services.NewQRCodeRenderer(320),
 		RedemptionBaseURL: deps.Config.AppBaseURL,

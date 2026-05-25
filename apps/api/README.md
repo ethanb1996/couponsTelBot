@@ -36,9 +36,12 @@ The MVP payment flow is manual PayBox approval:
 - `/start` shows the active offer catalog.
 - Buyer taps Buy and receives the merchant PayBox payment link.
 - Buyer uploads the PayBox payment screenshot in the Telegram chat.
-- Admin reviews pending claims at `/admin/payments`.
+- Telegram admins listed in `TELEGRAM_ADMIN_USER_IDS` receive approve/reject buttons in Telegram.
+- The web admin panel exposes `/admin/audit` for audit logs, with `/admin/payments` kept as a fallback claim queue.
 - Approval assigns a predefined code, sends a QR code to the buyer, and records delivery.
 - Merchant scans the QR code, which calls `/api/redemptions/scan/{token}` and records redemption in the database.
+
+Set `TELEGRAM_ADMIN_USER_IDS` to a comma-separated list of Telegram user IDs, for example `TELEGRAM_ADMIN_USER_IDS=123456,987654`.
 
 ## Supabase Notes
 

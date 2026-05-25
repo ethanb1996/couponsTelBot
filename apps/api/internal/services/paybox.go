@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/url"
@@ -32,6 +33,7 @@ type PayBoxStore interface {
 	RejectManualPaymentClaim(ctx context.Context, params store.ReviewManualPaymentClaimParams) (store.ManualPaymentClaim, store.MVPOrder, error)
 	CreateCouponRedemption(ctx context.Context, params store.CreateCouponRedemptionParams) (store.CouponRedemption, error)
 	RecordPredefinedCodeDeliveryEvent(ctx context.Context, params store.RecordPredefinedCodeDeliveryEventParams) (store.MVPDelivery, error)
+	RecordAdminAction(ctx context.Context, params store.RecordAdminActionParams) (store.AdminAction, error)
 	GetUserByID(ctx context.Context, userID int64) (store.User, error)
 }
 
@@ -236,6 +238,7 @@ func (s *PayBoxService) ApproveClaim(ctx context.Context, claimID int64, reviewe
 		if err := s.notifyUser(ctx, approved.Order.UserID, buildPayBoxSupportRequiredMessage(s.supportContact)); err != nil {
 			return PayBoxApprovalResult{}, err
 		}
+		s.recordPaymentClaimAudit(ctx, approved.Claim.ID, reviewedBy, "approve_payment_claim", reviewNote, result)
 		if err := s.notifyAdminNeedsSupport(ctx, result); err != nil {
 			return PayBoxApprovalResult{}, err
 		}
@@ -248,6 +251,7 @@ func (s *PayBoxService) ApproveClaim(ctx context.Context, claimID int64, reviewe
 	}
 	result.Redemption = &redemption
 	result.Delivery = &delivery
+	s.recordPaymentClaimAudit(ctx, approved.Claim.ID, reviewedBy, "approve_payment_claim", reviewNote, result)
 
 	if err := s.notifyAdminApproved(ctx, result); err != nil {
 		return PayBoxApprovalResult{}, err
@@ -269,6 +273,7 @@ func (s *PayBoxService) RejectClaim(ctx context.Context, claimID int64, reviewed
 	if err := s.notifyUser(ctx, order.UserID, buildPayBoxRejectedMessage(s.supportContact)); err != nil {
 		return store.ManualPaymentClaim{}, store.MVPOrder{}, err
 	}
+	s.recordPaymentClaimAudit(ctx, claim.ID, reviewedBy, "reject_payment_claim", reviewNote, map[string]any{"claim": claim, "order": order})
 	if err := s.notifyAdminRejected(ctx, claim, order); err != nil {
 		return store.ManualPaymentClaim{}, store.MVPOrder{}, err
 	}
@@ -387,6 +392,34 @@ func (s *PayBoxService) notifyAdminNeedsSupport(ctx context.Context, result PayB
 		return nil
 	}
 	return s.adminNotifier.NotifyPaymentClaimNeedsSupport(ctx, result)
+}
+
+func (s *PayBoxService) recordPaymentClaimAudit(ctx context.Context, claimID int64, reviewedBy string, actionType string, reason string, after any) {
+	afterJSON, err := json.Marshal(after)
+	if err != nil {
+		s.logger.Warn("failed to marshal paybox audit state",
+			"claim_id", claimID,
+			"action_type", actionType,
+			"error", err,
+		)
+		afterJSON = []byte("{}")
+	}
+
+	if _, err := s.store.RecordAdminAction(ctx, store.RecordAdminActionParams{
+		AdminActor:      firstNonEmpty(reviewedBy, "paybox-service"),
+		EntityType:      "manual_payment_claim",
+		EntityID:        claimID,
+		ActionType:      actionType,
+		BeforeStateJSON: "{}",
+		AfterStateJSON:  string(afterJSON),
+		ReasonText:      strings.TrimSpace(reason),
+	}); err != nil {
+		s.logger.Warn("failed to record paybox audit action",
+			"claim_id", claimID,
+			"action_type", actionType,
+			"error", err,
+		)
+	}
 }
 
 type timeOrderNumberer struct{}

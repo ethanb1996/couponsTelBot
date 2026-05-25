@@ -113,6 +113,8 @@ func (h *Handler) Route(w http.ResponseWriter, r *http.Request) {
 		h.orderDetail(w, r, path)
 	case path == "/admin/payments":
 		h.paymentClaims(w, r)
+	case path == "/admin/audit":
+		h.auditLog(w, r)
 	case path == "/admin/support":
 		h.support(w, r)
 	case strings.HasPrefix(path, "/admin/support/"):

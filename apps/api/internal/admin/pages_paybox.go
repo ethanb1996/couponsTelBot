@@ -32,20 +32,18 @@ func (h *Handler) paymentClaims(w http.ResponseWriter, r *http.Request) {
 
 		switch action {
 		case "approve":
-			result, err := h.payBox.ApproveClaim(r.Context(), claimID, operator, note)
+			_, err := h.payBox.ApproveClaim(r.Context(), claimID, operator, note)
 			if err != nil {
 				h.redirectWithError(w, r, "/admin/payments", err.Error())
 				return
 			}
-			h.recordAdminAction(r.Context(), operator, "manual_payment_claim", claimID, "approve_payment_claim", nil, result, note)
 			h.redirectWithSuccess(w, r, "/admin/payments", fmt.Sprintf("claim %d approved and QR delivery started", claimID))
 		case "reject":
-			claim, order, err := h.payBox.RejectClaim(r.Context(), claimID, operator, note)
+			_, _, err := h.payBox.RejectClaim(r.Context(), claimID, operator, note)
 			if err != nil {
 				h.redirectWithError(w, r, "/admin/payments", err.Error())
 				return
 			}
-			h.recordAdminAction(r.Context(), operator, "manual_payment_claim", claimID, "reject_payment_claim", nil, map[string]any{"claim": claim, "order": order}, note)
 			h.redirectWithSuccess(w, r, "/admin/payments", fmt.Sprintf("claim %d rejected", claimID))
 		default:
 			h.redirectWithError(w, r, "/admin/payments", "unknown payment review action")

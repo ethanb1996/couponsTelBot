@@ -15,6 +15,7 @@ func TestLoadReportsMissingEnvironmentVariablesInStableOrder(t *testing.T) {
 	t.Setenv("DATABASE_URL", "")
 	t.Setenv("TELEGRAM_BOT_TOKEN", "")
 	t.Setenv("TELEGRAM_WEBHOOK_SECRET", "")
+	t.Setenv("TELEGRAM_ADMIN_USER_IDS", "")
 	t.Setenv("ADMIN_BASIC_AUTH_USER", "")
 	t.Setenv("ADMIN_BASIC_AUTH_PASS", "")
 	t.Setenv("COUPON_ENCRYPTION_KEY", "")
@@ -37,6 +38,7 @@ func TestLoadAppliesDefaultsForOptionalEnvironmentVariables(t *testing.T) {
 	t.Setenv("DATABASE_URL", "postgres://example")
 	t.Setenv("TELEGRAM_BOT_TOKEN", "bot-token")
 	t.Setenv("TELEGRAM_WEBHOOK_SECRET", "telegram-secret")
+	t.Setenv("TELEGRAM_ADMIN_USER_IDS", "")
 	t.Setenv("ADMIN_BASIC_AUTH_USER", "admin")
 	t.Setenv("ADMIN_BASIC_AUTH_PASS", "password")
 	t.Setenv("COUPON_ENCRYPTION_KEY", strings.Repeat("a", 32))
@@ -131,6 +133,7 @@ func TestLoadAppliesExplicitDatabaseSettings(t *testing.T) {
 	t.Setenv("OPS_BATCH_SIZE", "15")
 	t.Setenv("TELEGRAM_BOT_TOKEN", "bot-token")
 	t.Setenv("TELEGRAM_WEBHOOK_SECRET", "telegram-secret")
+	t.Setenv("TELEGRAM_ADMIN_USER_IDS", "111, 222")
 	t.Setenv("ADMIN_BASIC_AUTH_USER", "admin")
 	t.Setenv("ADMIN_BASIC_AUTH_PASS", "password")
 	t.Setenv("COUPON_ENCRYPTION_KEY", strings.Repeat("a", 32))
@@ -191,6 +194,10 @@ func TestLoadAppliesExplicitDatabaseSettings(t *testing.T) {
 	if cfg.OpsBatchSize != 15 {
 		t.Fatalf("expected explicit OPS_BATCH_SIZE, got %d", cfg.OpsBatchSize)
 	}
+
+	if len(cfg.TelegramAdminUserIDs) != 2 || cfg.TelegramAdminUserIDs[0] != 111 || cfg.TelegramAdminUserIDs[1] != 222 {
+		t.Fatalf("expected parsed TELEGRAM_ADMIN_USER_IDS, got %#v", cfg.TelegramAdminUserIDs)
+	}
 }
 
 func TestLoadRejectsInvalidDatabaseSettings(t *testing.T) {
@@ -208,6 +215,25 @@ func TestLoadRejectsInvalidDatabaseSettings(t *testing.T) {
 	}
 
 	if !strings.Contains(err.Error(), "DATABASE_CONNECT_TIMEOUT must be a valid duration") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestLoadRejectsInvalidTelegramAdminUserIDs(t *testing.T) {
+	t.Setenv("DATABASE_URL", "postgres://example")
+	t.Setenv("TELEGRAM_BOT_TOKEN", "bot-token")
+	t.Setenv("TELEGRAM_WEBHOOK_SECRET", "telegram-secret")
+	t.Setenv("TELEGRAM_ADMIN_USER_IDS", "123,nope")
+	t.Setenv("ADMIN_BASIC_AUTH_USER", "admin")
+	t.Setenv("ADMIN_BASIC_AUTH_PASS", "password")
+	t.Setenv("COUPON_ENCRYPTION_KEY", strings.Repeat("a", 32))
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("expected config load to fail")
+	}
+
+	if got := err.Error(); got != "TELEGRAM_ADMIN_USER_IDS must contain comma-separated positive integers" {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
@@ -260,6 +286,7 @@ func TestLoadReadsDotEnvFromCurrentWorkingDirectory(t *testing.T) {
 		`DATABASE_URL="postgres://postgres:postgres@localhost:5432/coupons?sslmode=disable"`,
 		"TELEGRAM_BOT_TOKEN=dotenv-bot-token",
 		"TELEGRAM_WEBHOOK_SECRET=dotenv-telegram-secret",
+		"TELEGRAM_ADMIN_USER_IDS=333,444",
 		"ADMIN_BASIC_AUTH_USER=dotenv-admin",
 		"ADMIN_BASIC_AUTH_PASS=dotenv-password",
 		"COUPON_ENCRYPTION_KEY=" + strings.Repeat("a", 32),
@@ -289,6 +316,7 @@ func TestLoadReadsDotEnvFromCurrentWorkingDirectory(t *testing.T) {
 		"OPS_BATCH_SIZE",
 		"TELEGRAM_BOT_TOKEN",
 		"TELEGRAM_WEBHOOK_SECRET",
+		"TELEGRAM_ADMIN_USER_IDS",
 		"ADMIN_BASIC_AUTH_USER",
 		"ADMIN_BASIC_AUTH_PASS",
 		"COUPON_ENCRYPTION_KEY",
@@ -324,6 +352,10 @@ func TestLoadReadsDotEnvFromCurrentWorkingDirectory(t *testing.T) {
 
 	if cfg.TelegramBotToken != "dotenv-bot-token" {
 		t.Fatalf("expected TELEGRAM_BOT_TOKEN from .env, got %q", cfg.TelegramBotToken)
+	}
+
+	if len(cfg.TelegramAdminUserIDs) != 2 || cfg.TelegramAdminUserIDs[0] != 333 || cfg.TelegramAdminUserIDs[1] != 444 {
+		t.Fatalf("expected TELEGRAM_ADMIN_USER_IDS from .env, got %#v", cfg.TelegramAdminUserIDs)
 	}
 
 	if cfg.DatabaseQueryExecMode != "exec" {
