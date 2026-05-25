@@ -11,6 +11,7 @@ import (
 	"github.com/ethanb1996/couponsTelBot/apps/api/internal/admin"
 	"github.com/ethanb1996/couponsTelBot/apps/api/internal/config"
 	"github.com/ethanb1996/couponsTelBot/apps/api/internal/security"
+	"github.com/ethanb1996/couponsTelBot/apps/api/internal/services"
 	"github.com/ethanb1996/couponsTelBot/apps/api/internal/store"
 	"github.com/ethanb1996/couponsTelBot/apps/api/internal/telegram"
 )
@@ -45,6 +46,19 @@ func NewRouter(deps Dependencies) (Router, error) {
 	if err != nil {
 		return Router{}, err
 	}
+
+	payBoxService, err := services.NewPayBoxService(services.PayBoxServiceOptions{
+		Logger:            deps.Logger,
+		Store:             deps.Store,
+		Messenger:         botService,
+		CodeRenderer:      services.MaskedPredefinedCodeRenderer{},
+		QRRenderer:        services.NewQRCodeRenderer(320),
+		RedemptionBaseURL: deps.Config.AppBaseURL,
+	})
+	if err != nil {
+		return Router{}, err
+	}
+	botService.SetPayBoxFlow(payBoxService)
 
 	telegramHandler := telegram.NewWebhookHandler(deps.Logger, deps.Config.TelegramWebhookSecret, botService)
 

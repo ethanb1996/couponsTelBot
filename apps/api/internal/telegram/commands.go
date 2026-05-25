@@ -10,11 +10,13 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
 	"github.com/ethanb1996/couponsTelBot/apps/api/internal/config"
 	"github.com/ethanb1996/couponsTelBot/apps/api/internal/payments"
+	"github.com/ethanb1996/couponsTelBot/apps/api/internal/services"
 	"github.com/ethanb1996/couponsTelBot/apps/api/internal/store"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
@@ -25,6 +27,9 @@ const (
 	CallbackConfirmBuy     = "confirm_buy"
 	CallbackViewDetails    = "view_details"
 	CallbackContactSupport = "contact_support"
+	CallbackBuyOffer       = "buy_offer"
+	CallbackAnotherOffer   = "another_offer"
+	CallbackViewOffer      = "view_offer"
 )
 
 type BotService struct {
@@ -33,10 +38,19 @@ type BotService struct {
 	botAPI          *tgbotapi.BotAPI
 	config          *config.Config
 	checkoutStarter CheckoutStarter
+	payBox          PayBoxFlow
+	pendingClaims   *pendingPayBoxClaims
 }
 
 type CheckoutStarter interface {
 	StartCheckout(ctx context.Context, order store.Order, listing store.Listing) (payments.CheckoutLink, error)
+}
+
+type PayBoxFlow interface {
+	ListActiveOffers(ctx context.Context, limit int) ([]store.Offer, error)
+	GetOffer(ctx context.Context, offerID int64) (store.Offer, error)
+	StartPayment(ctx context.Context, userID int64, offerID int64) (services.PayBoxPaymentStart, error)
+	SubmitPaymentClaim(ctx context.Context, orderID int64, evidence services.PayBoxPaymentEvidence, claimedAmount int64) (store.ManualPaymentClaim, error)
 }
 
 type ExpiredCheckoutHoldNotifier interface {
@@ -49,10 +63,11 @@ func NewBotService(logger *slog.Logger, repo *store.Postgres, botToken string, c
 		return nil, err
 	}
 	return &BotService{
-		logger: logger,
-		store:  repo,
-		botAPI: api,
-		config: cfg,
+		logger:        logger,
+		store:         repo,
+		botAPI:        api,
+		config:        cfg,
+		pendingClaims: newPendingPayBoxClaims(),
 	}, nil
 }
 
@@ -60,9 +75,20 @@ func (s *BotService) SetCheckoutStarter(checkoutStarter CheckoutStarter) {
 	s.checkoutStarter = checkoutStarter
 }
 
+func (s *BotService) SetPayBoxFlow(payBox PayBoxFlow) {
+	s.payBox = payBox
+	if s.pendingClaims == nil {
+		s.pendingClaims = newPendingPayBoxClaims()
+	}
+}
+
 func (s *BotService) HandleUpdate(ctx context.Context, update tgbotapi.Update) error {
 	if update.Message != nil && update.Message.IsCommand() {
 		return s.handleCommand(ctx, update.Message)
+	}
+
+	if update.Message != nil {
+		return s.handleMessage(ctx, update.Message)
 	}
 
 	if update.CallbackQuery != nil {
@@ -83,11 +109,41 @@ func (s *BotService) handleCommand(ctx context.Context, message *tgbotapi.Messag
 	}
 }
 
+func (s *BotService) handleMessage(ctx context.Context, message *tgbotapi.Message) error {
+	if message == nil || message.Chat == nil || message.From == nil || s.pendingClaims == nil || s.payBox == nil {
+		return nil
+	}
+
+	pending, ok := s.pendingClaims.get(message.Chat.ID)
+	if !ok {
+		return nil
+	}
+
+	evidence, ok := paymentEvidenceFromMessage(message)
+	if !ok {
+		return s.sendMessage(ctx, message.Chat.ID, "Please upload the PayBox payment screenshot as a photo or image document.")
+	}
+	evidence.PayerReference = fmt.Sprintf("telegram:%d", message.From.ID)
+
+	claim, err := s.payBox.SubmitPaymentClaim(ctx, pending.orderID, evidence, pending.claimedAmount)
+	if err != nil {
+		s.logger.Error("failed to submit paybox screenshot claim", "error", err, "order_id", pending.orderID)
+		return s.sendMessage(ctx, message.Chat.ID, "Could not submit the screenshot for review. Please try again.")
+	}
+
+	s.pendingClaims.delete(message.Chat.ID)
+	return s.sendMessage(ctx, message.Chat.ID, fmt.Sprintf("Payment screenshot received. Claim #%d is waiting for admin approval.", claim.ID))
+}
+
 func (s *BotService) handleStart(ctx context.Context, message *tgbotapi.Message) error {
 	_, err := s.getOrCreateUser(ctx, message.From)
 	if err != nil {
 		s.logger.Error("failed to get or create user", "error", err, "user_id", message.From.ID)
 		return s.sendMessage(ctx, message.Chat.ID, "Something went wrong. Please try again.")
+	}
+
+	if s.payBox != nil {
+		return s.sendStartOffers(ctx, message.Chat.ID)
 	}
 
 	listings, err := s.loadStartListings(ctx)
@@ -118,10 +174,10 @@ func (s *BotService) handleHelp(ctx context.Context, message *tgbotapi.Message) 
 <b>How to buy:</b>
 1. Type /start to see available coupons
 2. Press the coupon button on a deal
-3. Review the coupon details
-4. Confirm your purchase
-5. Complete payment
-6. Get your coupon code
+3. Pay through the PayBox link
+4. Upload the payment screenshot here
+5. Wait for admin approval
+6. Show the QR code to the merchant
 
 <b>Need help?</b>
 Use the support button on any coupon detail screen.`
@@ -139,6 +195,24 @@ func (s *BotService) handleCallback(ctx context.Context, callback *tgbotapi.Call
 	}
 
 	switch parts[0] {
+	case CallbackBuyOffer:
+		if len(parts) < 2 {
+			return nil
+		}
+		offerID, _ := strconv.ParseInt(parts[1], 10, 64)
+		return s.handleBuyOffer(ctx, callback, offerID)
+	case CallbackAnotherOffer:
+		if len(parts) < 2 {
+			return nil
+		}
+		currentOfferID, _ := strconv.ParseInt(parts[1], 10, 64)
+		return s.handleAnotherOffer(ctx, callback.Message.Chat.ID, currentOfferID)
+	case CallbackViewOffer:
+		if len(parts) < 2 {
+			return nil
+		}
+		offerID, _ := strconv.ParseInt(parts[1], 10, 64)
+		return s.handleViewOffer(ctx, callback.Message.Chat.ID, offerID)
 	case CallbackBuyListing:
 		if len(parts) < 2 {
 			return nil
@@ -168,6 +242,69 @@ func (s *BotService) handleCallback(ctx context.Context, callback *tgbotapi.Call
 	default:
 		return nil
 	}
+}
+
+func (s *BotService) handleBuyOffer(ctx context.Context, callback *tgbotapi.CallbackQuery, offerID int64) error {
+	if s.payBox == nil {
+		return s.sendMessage(ctx, callback.Message.Chat.ID, "Payment is temporarily unavailable. Please try again later.")
+	}
+
+	user, err := s.getOrCreateUser(ctx, callback.From)
+	if err != nil {
+		s.logger.Error("failed to get paybox user", "error", err, "telegram_user_id", callback.From.ID)
+		return s.sendMessage(ctx, callback.Message.Chat.ID, "Something went wrong. Please try again.")
+	}
+
+	started, err := s.payBox.StartPayment(ctx, user.ID, offerID)
+	if err != nil {
+		s.logger.Error("failed to start paybox payment", "error", err, "user_id", user.ID, "offer_id", offerID)
+		return s.sendMessage(ctx, callback.Message.Chat.ID, "Unable to start PayBox payment for this offer right now.")
+	}
+
+	if s.pendingClaims == nil {
+		s.pendingClaims = newPendingPayBoxClaims()
+	}
+	s.pendingClaims.set(callback.Message.Chat.ID, pendingPayBoxClaim{
+		orderID:       started.OrderID,
+		claimedAmount: started.PriceAmount,
+	})
+
+	return s.sendPayBoxPaymentInstructions(ctx, callback.Message.Chat.ID, started)
+}
+
+func (s *BotService) handleViewOffer(ctx context.Context, chatID int64, offerID int64) error {
+	if s.payBox == nil {
+		return s.sendMessage(ctx, chatID, "Offers are temporarily unavailable. Please try again later.")
+	}
+
+	offer, err := s.payBox.GetOffer(ctx, offerID)
+	if err != nil {
+		s.logger.Error("failed to get paybox offer", "error", err, "offer_id", offerID)
+		return s.sendMessage(ctx, chatID, "Could not load offer details.")
+	}
+
+	return s.sendOfferDetails(ctx, chatID, offer)
+}
+
+func (s *BotService) handleAnotherOffer(ctx context.Context, chatID int64, currentOfferID int64) error {
+	offers, err := s.loadStartOffers(ctx)
+	if err != nil {
+		s.logger.Error("failed to fetch paybox offers for another deal", "error", err)
+		return s.sendMessage(ctx, chatID, "Unable to load another deal right now. Please try again later.")
+	}
+	if len(offers) == 0 {
+		return s.sendMessage(ctx, chatID, "No coupons available at the moment. Check back soon!")
+	}
+
+	nextIndex := 0
+	for i, offer := range offers {
+		if offer.ID == currentOfferID {
+			nextIndex = (i + 1) % len(offers)
+			break
+		}
+	}
+
+	return s.sendFeaturedOffer(ctx, chatID, offers, nextIndex)
 }
 
 func (s *BotService) handleBuyListing(ctx context.Context, callback *tgbotapi.CallbackQuery, listingID int64) error {
@@ -549,8 +686,13 @@ func formatHoldDuration(value time.Duration) string {
 	return value.String()
 }
 
-func formatCallbackData(action string, id int64) string {
-	return fmt.Sprintf("%s:%d", action, id)
+func formatCallbackData(action string, ids ...int64) string {
+	parts := make([]string, 0, len(ids)+1)
+	parts = append(parts, action)
+	for _, id := range ids {
+		parts = append(parts, strconv.FormatInt(id, 10))
+	}
+	return strings.Join(parts, ":")
 }
 
 func parseCallbackData(data string) []string {
@@ -573,6 +715,86 @@ func parseCallbackData(data string) []string {
 func (s *BotService) sendMessage(ctx context.Context, chatID int64, text string) error {
 	msg := tgbotapi.NewMessage(chatID, normalizeTelegramText(text))
 	msg.ParseMode = tgbotapi.ModeHTML
+	_, err := s.botAPI.Send(msg)
+	return err
+}
+
+func (s *BotService) sendStartOffers(ctx context.Context, chatID int64) error {
+	offers, err := s.loadStartOffers(ctx)
+	if err != nil {
+		s.logger.Error("failed to fetch paybox offers", "error", err)
+		return s.sendMessage(ctx, chatID, "Unable to load coupons. Please try again later.")
+	}
+	if len(offers) == 0 {
+		return s.sendMessage(ctx, chatID, "No coupons available at the moment. Check back soon!")
+	}
+
+	return s.sendFeaturedOffer(ctx, chatID, offers, 0)
+}
+
+func (s *BotService) loadStartOffers(ctx context.Context) ([]store.Offer, error) {
+	if s.payBox == nil {
+		return nil, nil
+	}
+	return s.payBox.ListActiveOffers(ctx, 5)
+}
+
+func (s *BotService) sendFeaturedOffer(ctx context.Context, chatID int64, offers []store.Offer, index int) error {
+	if len(offers) == 0 {
+		return s.sendMessage(ctx, chatID, "No coupons available at the moment. Check back soon!")
+	}
+	if index < 0 || index >= len(offers) {
+		index = 0
+	}
+
+	offer := offers[index]
+	msg := tgbotapi.NewMessage(chatID, normalizeTelegramText(formatOfferSummary(&offer)))
+	msg.ParseMode = tgbotapi.ModeHTML
+	msg.ReplyMarkup = offerKeyboard(offer.ID, offer.AvailableCodeCount, len(offers) > 1)
+	_, err := s.botAPI.Send(msg)
+	return err
+}
+
+func (s *BotService) sendOfferDetails(ctx context.Context, chatID int64, offer store.Offer) error {
+	msg := tgbotapi.NewMessage(chatID, normalizeTelegramText(formatOfferDetails(&offer)))
+	msg.ParseMode = tgbotapi.ModeHTML
+	msg.ReplyMarkup = offerDetailKeyboard(offer.ID, offer.AvailableCodeCount)
+	_, err := s.botAPI.Send(msg)
+	return err
+}
+
+func (s *BotService) sendPayBoxPaymentInstructions(ctx context.Context, chatID int64, started services.PayBoxPaymentStart) error {
+	text := fmt.Sprintf(`<b>PayBox payment ready</b>
+
+<b>Order:</b> %s
+<b>Coupon:</b> %s - %s
+<b>Amount:</b> %s
+
+Pay with the button below. After payment, upload the PayBox screenshot in this chat.`,
+		html.EscapeString(started.OrderNumber),
+		html.EscapeString(started.MerchantName),
+		html.EscapeString(started.OfferTitle),
+		formatPrice(started.PriceAmount),
+	)
+
+	if strings.TrimSpace(started.MerchantDisclosureText) != "" {
+		text += "\n\n" + html.EscapeString(started.MerchantDisclosureText)
+	}
+	if strings.TrimSpace(started.NextStepMessage) != "" {
+		text += "\n\n" + html.EscapeString(started.NextStepMessage)
+	}
+
+	msg := tgbotapi.NewMessage(chatID, normalizeTelegramText(text))
+	msg.ParseMode = tgbotapi.ModeHTML
+	msg.ReplyMarkup = tgbotapi.NewInlineKeyboardMarkup(
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonURL("Pay in PayBox", started.PaymentLink),
+		),
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("Another deal", formatCallbackData(CallbackAnotherOffer, started.OfferID)),
+		),
+	)
+
 	_, err := s.botAPI.Send(msg)
 	return err
 }
@@ -665,6 +887,68 @@ func (s *BotService) formatFeaturedListingCaption(listing *store.Listing) string
 	)
 }
 
+func formatOfferSummary(offer *store.Offer) string {
+	available := fmt.Sprintf("%d coupons", offer.AvailableCodeCount)
+	if offer.AvailableCodeCount == 1 {
+		available = "1 coupon"
+	}
+
+	return fmt.Sprintf("<b>%s</b>\n%s\n\n<b>Price:</b> %s\n<b>Available:</b> %s",
+		html.EscapeString(offer.MerchantName),
+		html.EscapeString(truncate(firstNonEmpty(offer.Title, offer.Description), 80)),
+		formatPrice(offer.PriceAmount),
+		html.EscapeString(available),
+	)
+}
+
+func formatOfferDetails(offer *store.Offer) string {
+	lines := []string{
+		fmt.Sprintf("<b>%s</b>", html.EscapeString(offer.MerchantName)),
+		html.EscapeString(offer.Title),
+		fmt.Sprintf("<b>Price:</b> %s", formatPrice(offer.PriceAmount)),
+	}
+	if strings.TrimSpace(offer.Description) != "" {
+		lines = append(lines, html.EscapeString(offer.Description))
+	}
+	if strings.TrimSpace(offer.RedemptionTerms) != "" {
+		lines = append(lines, "<b>Redemption:</b> "+html.EscapeString(offer.RedemptionTerms))
+	}
+	if strings.TrimSpace(offer.MerchantDisclosureText) != "" {
+		lines = append(lines, html.EscapeString(offer.MerchantDisclosureText))
+	}
+	return strings.Join(lines, "\n")
+}
+
+func offerKeyboard(offerID int64, availableCodeCount int64, allowAnotherDeal bool) *tgbotapi.InlineKeyboardMarkup {
+	rows := make([][]tgbotapi.InlineKeyboardButton, 0, 2)
+	firstRow := make([]tgbotapi.InlineKeyboardButton, 0, 2)
+
+	if availableCodeCount > 0 {
+		firstRow = append(firstRow, tgbotapi.NewInlineKeyboardButtonData("Buy", formatCallbackData(CallbackBuyOffer, offerID)))
+	}
+	if allowAnotherDeal {
+		firstRow = append(firstRow, tgbotapi.NewInlineKeyboardButtonData("Another deal", formatCallbackData(CallbackAnotherOffer, offerID)))
+	}
+	if len(firstRow) == 0 {
+		firstRow = append(firstRow, tgbotapi.NewInlineKeyboardButtonData("Details", formatCallbackData(CallbackViewOffer, offerID)))
+	}
+
+	rows = append(rows, firstRow)
+	rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+		tgbotapi.NewInlineKeyboardButtonData("Details", formatCallbackData(CallbackViewOffer, offerID)),
+	))
+	return &tgbotapi.InlineKeyboardMarkup{InlineKeyboard: rows}
+}
+
+func offerDetailKeyboard(offerID int64, availableCodeCount int64) *tgbotapi.InlineKeyboardMarkup {
+	row := make([]tgbotapi.InlineKeyboardButton, 0, 2)
+	if availableCodeCount > 0 {
+		row = append(row, tgbotapi.NewInlineKeyboardButtonData("Buy", formatCallbackData(CallbackBuyOffer, offerID)))
+	}
+	row = append(row, tgbotapi.NewInlineKeyboardButtonData("Another deal", formatCallbackData(CallbackAnotherOffer, offerID)))
+	return &tgbotapi.InlineKeyboardMarkup{InlineKeyboard: [][]tgbotapi.InlineKeyboardButton{row}}
+}
+
 func (s *BotService) formatListingPhotoCaption(listing *store.Listing) string {
 	return fmt.Sprintf("<b>%s</b>\n%s", html.EscapeString(listing.MerchantName), html.EscapeString(truncate(listing.Title, 80)))
 }
@@ -697,6 +981,20 @@ func (s *BotService) isDevelopmentMode() bool {
 
 func (s *BotService) SendHTMLMessage(ctx context.Context, telegramUserID int64, text string) (int64, error) {
 	msg := tgbotapi.NewMessage(telegramUserID, normalizeTelegramText(text))
+	msg.ParseMode = tgbotapi.ModeHTML
+	sent, err := s.botAPI.Send(msg)
+	if err != nil {
+		return 0, err
+	}
+	return int64(sent.MessageID), nil
+}
+
+func (s *BotService) SendPhotoMessage(ctx context.Context, telegramUserID int64, photo []byte, filename string, caption string) (int64, error) {
+	msg := tgbotapi.NewPhoto(telegramUserID, tgbotapi.FileBytes{
+		Name:  filename,
+		Bytes: photo,
+	})
+	msg.Caption = normalizeTelegramText(caption)
 	msg.ParseMode = tgbotapi.ModeHTML
 	sent, err := s.botAPI.Send(msg)
 	if err != nil {
@@ -812,4 +1110,71 @@ func filterBrowsableListings(listings []store.Listing, isDevelopment bool) []sto
 		filtered = append(filtered, listing)
 	}
 	return filtered
+}
+
+func paymentEvidenceFromMessage(message *tgbotapi.Message) (services.PayBoxPaymentEvidence, bool) {
+	if len(message.Photo) > 0 {
+		photo := message.Photo[len(message.Photo)-1]
+		messageID := int64(message.MessageID)
+		return services.PayBoxPaymentEvidence{
+			ScreenshotFileID:            photo.FileID,
+			ScreenshotUniqueID:          photo.FileUniqueID,
+			ScreenshotTelegramMessageID: &messageID,
+			ScreenshotCaption:           message.Caption,
+		}, true
+	}
+
+	if message.Document != nil && strings.HasPrefix(strings.ToLower(message.Document.MimeType), "image/") {
+		messageID := int64(message.MessageID)
+		return services.PayBoxPaymentEvidence{
+			ScreenshotFileID:            message.Document.FileID,
+			ScreenshotUniqueID:          message.Document.FileUniqueID,
+			ScreenshotTelegramMessageID: &messageID,
+			ScreenshotCaption:           message.Caption,
+		}, true
+	}
+
+	return services.PayBoxPaymentEvidence{}, false
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
+}
+
+type pendingPayBoxClaim struct {
+	orderID       int64
+	claimedAmount int64
+}
+
+type pendingPayBoxClaims struct {
+	mu     sync.Mutex
+	claims map[int64]pendingPayBoxClaim
+}
+
+func newPendingPayBoxClaims() *pendingPayBoxClaims {
+	return &pendingPayBoxClaims{claims: make(map[int64]pendingPayBoxClaim)}
+}
+
+func (p *pendingPayBoxClaims) set(chatID int64, claim pendingPayBoxClaim) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.claims[chatID] = claim
+}
+
+func (p *pendingPayBoxClaims) get(chatID int64) (pendingPayBoxClaim, bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	claim, ok := p.claims[chatID]
+	return claim, ok
+}
+
+func (p *pendingPayBoxClaims) delete(chatID int64) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	delete(p.claims, chatID)
 }
