@@ -36,11 +36,6 @@ func NewRouter(deps Dependencies) (Router, error) {
 		return Router{}, errors.New("store is required")
 	}
 
-	adminHandler, err := admin.NewHandler(deps.Logger, deps.Store, deps.Config.CouponEncryptionKey)
-	if err != nil {
-		return Router{}, err
-	}
-
 	// Create bot service
 	botService, err := telegram.NewBotService(deps.Logger, deps.Store, deps.Config.TelegramBotToken, &deps.Config)
 	if err != nil {
@@ -59,6 +54,11 @@ func NewRouter(deps Dependencies) (Router, error) {
 		return Router{}, err
 	}
 	botService.SetPayBoxFlow(payBoxService)
+
+	adminHandler, err := admin.NewHandler(deps.Logger, deps.Store, deps.Config.CouponEncryptionKey, payBoxService)
+	if err != nil {
+		return Router{}, err
+	}
 
 	telegramHandler := telegram.NewWebhookHandler(deps.Logger, deps.Config.TelegramWebhookSecret, botService)
 

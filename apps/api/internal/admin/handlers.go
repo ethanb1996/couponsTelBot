@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ethanb1996/couponsTelBot/apps/api/internal/services"
 	"github.com/ethanb1996/couponsTelBot/apps/api/internal/store"
 	admintemplates "github.com/ethanb1996/couponsTelBot/apps/api/templates"
 )
@@ -14,6 +15,7 @@ import (
 type Handler struct {
 	logger              *slog.Logger
 	store               *store.Postgres
+	payBox              *services.PayBoxService
 	templates           *template.Template
 	couponEncryptionKey string
 }
@@ -49,6 +51,7 @@ type pageData struct {
 	Delivery          *store.CouponDelivery
 	SupportCases      []store.SupportCaseSummary
 	SupportCase       *store.SupportCaseSummary
+	PaymentClaims     []store.ManualPaymentClaim
 	AdminActions      []store.AdminAction
 	DeliveryAlerts    []store.PaidUndeliveredOrderAlert
 	ReconcileQueue    []store.PendingPaymentReconciliationCandidate
@@ -70,7 +73,7 @@ type dashboardView struct {
 	RecentAuditCount     int
 }
 
-func NewHandler(logger *slog.Logger, db *store.Postgres, couponEncryptionKey string) (*Handler, error) {
+func NewHandler(logger *slog.Logger, db *store.Postgres, couponEncryptionKey string, payBox *services.PayBoxService) (*Handler, error) {
 	parsed, err := template.ParseFS(admintemplates.FS, "*.html")
 	if err != nil {
 		return nil, err
@@ -79,6 +82,7 @@ func NewHandler(logger *slog.Logger, db *store.Postgres, couponEncryptionKey str
 	return &Handler{
 		logger:              logger,
 		store:               db,
+		payBox:              payBox,
 		templates:           parsed,
 		couponEncryptionKey: couponEncryptionKey,
 	}, nil
@@ -107,6 +111,8 @@ func (h *Handler) Route(w http.ResponseWriter, r *http.Request) {
 		h.orders(w, r)
 	case strings.HasPrefix(path, "/admin/orders/"):
 		h.orderDetail(w, r, path)
+	case path == "/admin/payments":
+		h.paymentClaims(w, r)
 	case path == "/admin/support":
 		h.support(w, r)
 	case strings.HasPrefix(path, "/admin/support/"):
