@@ -2,10 +2,12 @@ package services
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"log/slog"
+	"net/url"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -17,6 +19,7 @@ var (
 	ErrPayBoxStoreRequired        = errors.New("paybox: store is required")
 	ErrPayBoxMessengerRequired    = errors.New("paybox: messenger is required")
 	ErrPayBoxCodeRendererRequired = errors.New("paybox: code renderer is required")
+	ErrPayBoxQRRendererRequired   = errors.New("paybox: qr renderer is required")
 )
 
 type PayBoxStore interface {
@@ -27,12 +30,14 @@ type PayBoxStore interface {
 	ListPendingManualPaymentClaims(ctx context.Context, limit int) ([]store.ManualPaymentClaim, error)
 	ApproveManualPaymentClaim(ctx context.Context, params store.ReviewManualPaymentClaimParams) (store.ApproveManualPaymentClaimResult, error)
 	RejectManualPaymentClaim(ctx context.Context, params store.ReviewManualPaymentClaimParams) (store.ManualPaymentClaim, store.MVPOrder, error)
+	CreateCouponRedemption(ctx context.Context, params store.CreateCouponRedemptionParams) (store.CouponRedemption, error)
 	RecordPredefinedCodeDeliveryEvent(ctx context.Context, params store.RecordPredefinedCodeDeliveryEventParams) (store.MVPDelivery, error)
 	GetUserByID(ctx context.Context, userID int64) (store.User, error)
 }
 
 type PayBoxMessenger interface {
 	SendHTMLMessage(ctx context.Context, telegramUserID int64, text string) (int64, error)
+	SendPhotoMessage(ctx context.Context, telegramUserID int64, photo []byte, filename string, caption string) (int64, error)
 }
 
 type PayBoxAdminNotifier interface {
@@ -46,30 +51,38 @@ type PayBoxCodeRenderer interface {
 	RenderPredefinedCode(ctx context.Context, code store.PredefinedCode) (string, error)
 }
 
+type PayBoxQRRenderer interface {
+	RenderPNG(payload string) ([]byte, error)
+}
+
 type OrderNumberGenerator interface {
 	NewOrderNumber() string
 }
 
 type PayBoxService struct {
-	logger          *slog.Logger
-	store           PayBoxStore
-	messenger       PayBoxMessenger
-	adminNotifier   PayBoxAdminNotifier
-	codeRenderer    PayBoxCodeRenderer
-	orderNumberer   OrderNumberGenerator
-	supportContact  string
-	approvalMessage string
+	logger            *slog.Logger
+	store             PayBoxStore
+	messenger         PayBoxMessenger
+	adminNotifier     PayBoxAdminNotifier
+	codeRenderer      PayBoxCodeRenderer
+	qrRenderer        PayBoxQRRenderer
+	orderNumberer     OrderNumberGenerator
+	supportContact    string
+	approvalMessage   string
+	redemptionBaseURL string
 }
 
 type PayBoxServiceOptions struct {
-	Logger          *slog.Logger
-	Store           PayBoxStore
-	Messenger       PayBoxMessenger
-	AdminNotifier   PayBoxAdminNotifier
-	CodeRenderer    PayBoxCodeRenderer
-	OrderNumberer   OrderNumberGenerator
-	SupportContact  string
-	ApprovalMessage string
+	Logger            *slog.Logger
+	Store             PayBoxStore
+	Messenger         PayBoxMessenger
+	AdminNotifier     PayBoxAdminNotifier
+	CodeRenderer      PayBoxCodeRenderer
+	QRRenderer        PayBoxQRRenderer
+	OrderNumberer     OrderNumberGenerator
+	SupportContact    string
+	ApprovalMessage   string
+	RedemptionBaseURL string
 }
 
 type PayBoxPaymentStart struct {
@@ -91,8 +104,17 @@ type PayBoxApprovalResult struct {
 	Order        store.MVPOrder
 	Claim        store.ManualPaymentClaim
 	Code         *store.PredefinedCode
+	Redemption   *store.CouponRedemption
 	Delivery     *store.MVPDelivery
 	SupportState bool
+}
+
+type PayBoxPaymentEvidence struct {
+	PayerReference              string
+	ScreenshotFileID            string
+	ScreenshotUniqueID          string
+	ScreenshotTelegramMessageID *int64
+	ScreenshotCaption           string
 }
 
 func NewPayBoxService(options PayBoxServiceOptions) (*PayBoxService, error) {
@@ -114,14 +136,16 @@ func NewPayBoxService(options PayBoxServiceOptions) (*PayBoxService, error) {
 	}
 
 	return &PayBoxService{
-		logger:          logger,
-		store:           options.Store,
-		messenger:       options.Messenger,
-		adminNotifier:   options.AdminNotifier,
-		codeRenderer:    options.CodeRenderer,
-		orderNumberer:   orderNumberer,
-		supportContact:  strings.TrimSpace(options.SupportContact),
-		approvalMessage: strings.TrimSpace(options.ApprovalMessage),
+		logger:            logger,
+		store:             options.Store,
+		messenger:         options.Messenger,
+		adminNotifier:     options.AdminNotifier,
+		codeRenderer:      options.CodeRenderer,
+		qrRenderer:        options.QRRenderer,
+		orderNumberer:     orderNumberer,
+		supportContact:    strings.TrimSpace(options.SupportContact),
+		approvalMessage:   strings.TrimSpace(options.ApprovalMessage),
+		redemptionBaseURL: strings.TrimRight(strings.TrimSpace(options.RedemptionBaseURL), "/"),
 	}, nil
 }
 
@@ -167,11 +191,15 @@ func (s *PayBoxService) StartPayment(ctx context.Context, userID int64, offerID 
 	}, nil
 }
 
-func (s *PayBoxService) SubmitPaymentClaim(ctx context.Context, orderID int64, payerUsername string, claimedAmount int64) (store.ManualPaymentClaim, error) {
+func (s *PayBoxService) SubmitPaymentClaim(ctx context.Context, orderID int64, evidence PayBoxPaymentEvidence, claimedAmount int64) (store.ManualPaymentClaim, error) {
 	claim, err := s.store.SubmitManualPaymentClaim(ctx, store.SubmitManualPaymentClaimParams{
-		OrderID:       orderID,
-		PayerUsername: payerUsername,
-		ClaimedAmount: claimedAmount,
+		OrderID:                    orderID,
+		PayerUsername:              evidence.PayerReference,
+		ClaimedAmount:              claimedAmount,
+		PaymentScreenshotFileID:    evidence.ScreenshotFileID,
+		PaymentScreenshotUniqueID:  evidence.ScreenshotUniqueID,
+		PaymentScreenshotMessageID: evidence.ScreenshotTelegramMessageID,
+		PaymentScreenshotCaption:   evidence.ScreenshotCaption,
 	})
 	if err != nil {
 		return store.ManualPaymentClaim{}, err
@@ -214,10 +242,11 @@ func (s *PayBoxService) ApproveClaim(ctx context.Context, claimID int64, reviewe
 		return result, nil
 	}
 
-	delivery, err := s.deliverApprovedCode(ctx, approved.Order, *approved.Code)
+	redemption, delivery, err := s.deliverApprovedCode(ctx, approved.Order, *approved.Code)
 	if err != nil {
 		return PayBoxApprovalResult{}, err
 	}
+	result.Redemption = &redemption
 	result.Delivery = &delivery
 
 	if err := s.notifyAdminApproved(ctx, result); err != nil {
@@ -248,27 +277,46 @@ func (s *PayBoxService) RejectClaim(ctx context.Context, claimID int64, reviewed
 }
 
 func (s *PayBoxService) DeliverApprovedCode(ctx context.Context, order store.MVPOrder, code store.PredefinedCode) (store.MVPDelivery, error) {
-	return s.deliverApprovedCode(ctx, order, code)
+	_, delivery, err := s.deliverApprovedCode(ctx, order, code)
+	return delivery, err
 }
 
-func (s *PayBoxService) deliverApprovedCode(ctx context.Context, order store.MVPOrder, code store.PredefinedCode) (store.MVPDelivery, error) {
+func (s *PayBoxService) deliverApprovedCode(ctx context.Context, order store.MVPOrder, code store.PredefinedCode) (store.CouponRedemption, store.MVPDelivery, error) {
 	if s.codeRenderer == nil {
-		return store.MVPDelivery{}, ErrPayBoxCodeRendererRequired
+		return store.CouponRedemption{}, store.MVPDelivery{}, ErrPayBoxCodeRendererRequired
+	}
+	if s.qrRenderer == nil {
+		return store.CouponRedemption{}, store.MVPDelivery{}, ErrPayBoxQRRendererRequired
 	}
 
 	codeText, err := s.codeRenderer.RenderPredefinedCode(ctx, code)
 	if err != nil {
-		return store.MVPDelivery{}, err
+		return store.CouponRedemption{}, store.MVPDelivery{}, err
 	}
-	message := buildPayBoxCodeMessage(codeText, order.RedemptionTerms, firstNonEmpty(order.SupportContact, s.supportContact), s.approvalMessage)
-	payloadHash := hashPayBoxPayload(message)
+
+	redemption, err := s.store.CreateCouponRedemption(ctx, store.CreateCouponRedemptionParams{
+		OrderID:          order.ID,
+		PredefinedCodeID: code.ID,
+		RedemptionToken:  newPayBoxRedemptionToken(),
+	})
+	if err != nil {
+		return store.CouponRedemption{}, store.MVPDelivery{}, err
+	}
+
+	qrPayload := buildPayBoxRedemptionURL(s.redemptionBaseURL, redemption.RedemptionToken)
+	qrPNG, err := s.qrRenderer.RenderPNG(qrPayload)
+	if err != nil {
+		return store.CouponRedemption{}, store.MVPDelivery{}, err
+	}
+	message := buildPayBoxQRMessage(codeText, order.RedemptionTerms, firstNonEmpty(order.SupportContact, s.supportContact), s.approvalMessage)
+	payloadHash := hashPayBoxPayload(message + "\n" + qrPayload)
 
 	user, err := s.store.GetUserByID(ctx, order.UserID)
 	if err != nil {
-		return store.MVPDelivery{}, err
+		return store.CouponRedemption{}, store.MVPDelivery{}, err
 	}
 
-	messageID, err := s.messenger.SendHTMLMessage(ctx, user.TelegramUserID, message)
+	messageID, err := s.messenger.SendPhotoMessage(ctx, user.TelegramUserID, qrPNG, "paybox-coupon-qr.png", message)
 	if err != nil {
 		if _, recordErr := s.store.RecordPredefinedCodeDeliveryEvent(ctx, store.RecordPredefinedCodeDeliveryEventParams{
 			OrderID:             order.ID,
@@ -284,11 +332,11 @@ func (s *PayBoxService) deliverApprovedCode(ctx context.Context, order store.MVP
 				"error", recordErr,
 			)
 		}
-		return store.MVPDelivery{}, err
+		return store.CouponRedemption{}, store.MVPDelivery{}, err
 	}
 
 	now := time.Now().UTC()
-	return s.store.RecordPredefinedCodeDeliveryEvent(ctx, store.RecordPredefinedCodeDeliveryEventParams{
+	delivery, err := s.store.RecordPredefinedCodeDeliveryEvent(ctx, store.RecordPredefinedCodeDeliveryEventParams{
 		OrderID:             order.ID,
 		PredefinedCodeID:    code.ID,
 		DeliveryChannel:     "telegram_bot",
@@ -298,6 +346,10 @@ func (s *PayBoxService) deliverApprovedCode(ctx context.Context, order store.MVP
 		SentAt:              &now,
 		ConfirmedAt:         &now,
 	})
+	if err != nil {
+		return store.CouponRedemption{}, store.MVPDelivery{}, err
+	}
+	return redemption, delivery, nil
 }
 
 func (s *PayBoxService) notifyUser(ctx context.Context, userID int64, message string) error {
@@ -348,15 +400,18 @@ func buildPayBoxNextStepMessage(supportContact string) string {
 	if strings.TrimSpace(supportContact) != "" {
 		support = "\nSupport: " + strings.TrimSpace(supportContact)
 	}
-	return "Pay through the PayBox link, return here, tap I paid, and send the exact PayBox username used for the payment." + support
+	return "Pay through the PayBox link, then upload the payment screenshot here for admin approval." + support
 }
 
-func buildPayBoxCodeMessage(code string, redemptionTerms string, supportContact string, approvalMessage string) string {
+func buildPayBoxQRMessage(code string, redemptionTerms string, supportContact string, approvalMessage string) string {
 	parts := []string{"Payment approved."}
 	if strings.TrimSpace(approvalMessage) != "" {
 		parts[0] = strings.TrimSpace(approvalMessage)
 	}
-	parts = append(parts, "<code>"+htmlEscapePayBox(code)+"</code>")
+	parts = append(parts, "Show this QR code to the merchant.")
+	if strings.TrimSpace(code) != "" {
+		parts = append(parts, "Coupon: <code>"+htmlEscapePayBox(code)+"</code>")
+	}
 	if strings.TrimSpace(redemptionTerms) != "" {
 		parts = append(parts, "Redemption: "+htmlEscapePayBox(redemptionTerms))
 	}
@@ -364,6 +419,14 @@ func buildPayBoxCodeMessage(code string, redemptionTerms string, supportContact 
 		parts = append(parts, "Support: "+htmlEscapePayBox(supportContact))
 	}
 	return strings.Join(parts, "\n")
+}
+
+func buildPayBoxRedemptionURL(baseURL string, token string) string {
+	cleanToken := url.PathEscape(strings.TrimSpace(token))
+	if strings.TrimSpace(baseURL) == "" {
+		return "paybox-redemption:" + cleanToken
+	}
+	return strings.TrimRight(baseURL, "/") + "/api/redemptions/scan/" + cleanToken
 }
 
 func buildPayBoxRejectedMessage(supportContact string) string {
@@ -385,6 +448,14 @@ func buildPayBoxSupportRequiredMessage(supportContact string) string {
 func hashPayBoxPayload(text string) string {
 	sum := sha256.Sum256([]byte(text))
 	return hex.EncodeToString(sum[:])
+}
+
+func newPayBoxRedemptionToken() string {
+	var raw [16]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		return "rt-" + time.Now().UTC().Format("20060102150405.000000000")
+	}
+	return hex.EncodeToString(raw[:])
 }
 
 func truncatePayBoxText(value string, limit int) string {

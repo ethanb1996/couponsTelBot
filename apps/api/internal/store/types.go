@@ -208,23 +208,41 @@ type MVPOrder struct {
 }
 
 type ManualPaymentClaim struct {
-	ID              int64
-	OrderID         int64
-	PayerUsername   string
-	ClaimedAmount   int64
-	SubmittedAt     time.Time
-	ReviewStatus    string
-	ReviewedBy      string
-	ReviewedAt      *time.Time
-	ReviewNote      string
-	CreatedAt       time.Time
-	UpdatedAt       time.Time
-	OrderNumber     string
-	BuyerUserID     int64
-	OfferTitle      string
-	MerchantName    string
-	BuyerDisplay    string
-	BuyerTelegramID int64
+	ID                         int64
+	OrderID                    int64
+	PayerUsername              string
+	ClaimedAmount              int64
+	PaymentScreenshotFileID    string
+	PaymentScreenshotUniqueID  string
+	PaymentScreenshotMessageID *int64
+	PaymentScreenshotCaption   string
+	SubmittedAt                time.Time
+	ReviewStatus               string
+	ReviewedBy                 string
+	ReviewedAt                 *time.Time
+	ReviewNote                 string
+	CreatedAt                  time.Time
+	UpdatedAt                  time.Time
+	OrderNumber                string
+	BuyerUserID                int64
+	OfferTitle                 string
+	MerchantName               string
+	BuyerDisplay               string
+	BuyerTelegramID            int64
+}
+
+type CouponRedemption struct {
+	ID                int64
+	OrderID           int64
+	PredefinedCodeID  int64
+	RedemptionToken   string
+	Status            string
+	MerchantReference string
+	ScannerReference  string
+	ScanMetadataJSON  string
+	ScannedAt         *time.Time
+	CreatedAt         time.Time
+	UpdatedAt         time.Time
 }
 type FulfillmentPreparation struct {
 	Order    Order
@@ -370,9 +388,13 @@ type CreateAwaitingPaymentOrderParams struct {
 }
 
 type SubmitManualPaymentClaimParams struct {
-	OrderID       int64
-	PayerUsername string
-	ClaimedAmount int64
+	OrderID                    int64
+	PayerUsername              string
+	ClaimedAmount              int64
+	PaymentScreenshotFileID    string
+	PaymentScreenshotUniqueID  string
+	PaymentScreenshotMessageID *int64
+	PaymentScreenshotCaption   string
 }
 
 type ReviewManualPaymentClaimParams struct {
@@ -385,6 +407,19 @@ type ApproveManualPaymentClaimResult struct {
 	Order MVPOrder
 	Claim ManualPaymentClaim
 	Code  *PredefinedCode
+}
+
+type CreateCouponRedemptionParams struct {
+	OrderID          int64
+	PredefinedCodeID int64
+	RedemptionToken  string
+}
+
+type RecordCouponRedemptionScanParams struct {
+	RedemptionToken   string
+	MerchantReference string
+	ScannerReference  string
+	ScanMetadataJSON  string
 }
 type CreateListingParams struct {
 	MerchantName            string

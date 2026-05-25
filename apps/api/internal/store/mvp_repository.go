@@ -416,8 +416,8 @@ func (p *Postgres) SubmitManualPaymentClaim(ctx context.Context, params SubmitMa
 	if params.OrderID == 0 {
 		return ManualPaymentClaim{}, fmt.Errorf("%w: order id is required", ErrInvalidArgument)
 	}
-	if strings.TrimSpace(params.PayerUsername) == "" {
-		return ManualPaymentClaim{}, fmt.Errorf("%w: payer username is required", ErrInvalidArgument)
+	if strings.TrimSpace(params.PaymentScreenshotFileID) == "" {
+		return ManualPaymentClaim{}, fmt.Errorf("%w: payment screenshot is required", ErrInvalidArgument)
 	}
 
 	tx, err := p.Pool.BeginTx(ctx, pgx.TxOptions{})
@@ -458,13 +458,21 @@ func (p *Postgres) SubmitManualPaymentClaim(ctx context.Context, params SubmitMa
 			order_id,
 			payer_username,
 			claimed_amount,
+			payment_screenshot_file_id,
+			payment_screenshot_unique_id,
+			payment_screenshot_message_id,
+			payment_screenshot_caption,
 			submitted_at
-		) VALUES ($1, $2, $3, NOW())
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
 		RETURNING
 			id,
 			order_id,
 			payer_username,
 			claimed_amount,
+			payment_screenshot_file_id,
+			payment_screenshot_unique_id,
+			payment_screenshot_message_id,
+			payment_screenshot_caption,
 			submitted_at,
 			review_status,
 			reviewed_by,
@@ -472,7 +480,15 @@ func (p *Postgres) SubmitManualPaymentClaim(ctx context.Context, params SubmitMa
 			review_note,
 			created_at,
 			updated_at
-	`, params.OrderID, strings.TrimSpace(params.PayerUsername), claimedAmount)
+	`,
+		params.OrderID,
+		strings.TrimSpace(params.PayerUsername),
+		claimedAmount,
+		strings.TrimSpace(params.PaymentScreenshotFileID),
+		strings.TrimSpace(params.PaymentScreenshotUniqueID),
+		params.PaymentScreenshotMessageID,
+		strings.TrimSpace(params.PaymentScreenshotCaption),
+	)
 
 	claim, err := scanManualPaymentClaim(row)
 	if err != nil {
@@ -655,6 +671,10 @@ func (p *Postgres) RejectManualPaymentClaim(ctx context.Context, params ReviewMa
 			order_id,
 			payer_username,
 			claimed_amount,
+			payment_screenshot_file_id,
+			payment_screenshot_unique_id,
+			payment_screenshot_message_id,
+			payment_screenshot_caption,
 			submitted_at,
 			review_status,
 			reviewed_by,
@@ -727,6 +747,10 @@ func loadPendingManualPaymentClaim(ctx context.Context, tx pgx.Tx, orderID int64
 			order_id,
 			payer_username,
 			claimed_amount,
+			payment_screenshot_file_id,
+			payment_screenshot_unique_id,
+			payment_screenshot_message_id,
+			payment_screenshot_caption,
 			submitted_at,
 			review_status,
 			reviewed_by,
@@ -758,6 +782,10 @@ func loadManualPaymentClaimForUpdate(ctx context.Context, tx pgx.Tx, claimID int
 			order_id,
 			payer_username,
 			claimed_amount,
+			payment_screenshot_file_id,
+			payment_screenshot_unique_id,
+			payment_screenshot_message_id,
+			payment_screenshot_caption,
 			submitted_at,
 			review_status,
 			reviewed_by,
@@ -892,6 +920,10 @@ func updateManualClaimReview(ctx context.Context, tx pgx.Tx, claimID int64, stat
 			order_id,
 			payer_username,
 			claimed_amount,
+			payment_screenshot_file_id,
+			payment_screenshot_unique_id,
+			payment_screenshot_message_id,
+			payment_screenshot_caption,
 			submitted_at,
 			review_status,
 			reviewed_by,
@@ -1028,6 +1060,10 @@ func manualPaymentClaimSummarySQL(suffix string) string {
 			mpc.order_id,
 			mpc.payer_username,
 			mpc.claimed_amount,
+			mpc.payment_screenshot_file_id,
+			mpc.payment_screenshot_unique_id,
+			mpc.payment_screenshot_message_id,
+			mpc.payment_screenshot_caption,
 			mpc.submitted_at,
 			mpc.review_status,
 			mpc.reviewed_by,
@@ -1150,6 +1186,10 @@ func scanManualPaymentClaim(row interface {
 		&claim.OrderID,
 		&claim.PayerUsername,
 		&claim.ClaimedAmount,
+		&claim.PaymentScreenshotFileID,
+		&claim.PaymentScreenshotUniqueID,
+		&claim.PaymentScreenshotMessageID,
+		&claim.PaymentScreenshotCaption,
 		&claim.SubmittedAt,
 		&claim.ReviewStatus,
 		&claim.ReviewedBy,
@@ -1170,6 +1210,10 @@ func scanManualPaymentClaimSummary(row interface {
 		&claim.OrderID,
 		&claim.PayerUsername,
 		&claim.ClaimedAmount,
+		&claim.PaymentScreenshotFileID,
+		&claim.PaymentScreenshotUniqueID,
+		&claim.PaymentScreenshotMessageID,
+		&claim.PaymentScreenshotCaption,
 		&claim.SubmittedAt,
 		&claim.ReviewStatus,
 		&claim.ReviewedBy,
