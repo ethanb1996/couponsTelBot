@@ -13,7 +13,6 @@ import (
 
 	"github.com/ethanb1996/couponsTelBot/apps/api/internal/config"
 	apphttp "github.com/ethanb1996/couponsTelBot/apps/api/internal/http"
-	"github.com/ethanb1996/couponsTelBot/apps/api/internal/ops"
 	"github.com/ethanb1996/couponsTelBot/apps/api/internal/store"
 )
 
@@ -69,20 +68,6 @@ func main() {
 		logger.Error("failed to build router", "error", err)
 		os.Exit(1)
 	}
-
-	runner := ops.NewRunner(
-		logger,
-		db,
-		router.PaymentService,
-		router.BotService,
-		cfg.OpsSweepInterval,
-		cfg.OpsDeliveryAlertAfter,
-		cfg.OpsReconcileAfter,
-		cfg.OpsCheckoutHoldDuration,
-		cfg.OpsBatchSize,
-	)
-	router.PaymentService.SetFulfillmentNotifier(runner)
-	runner.Start(ctx)
 
 	server := &http.Server{
 		Addr:              ":" + cfg.Port,

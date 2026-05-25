@@ -141,11 +141,6 @@ func Load() (Config, error) {
 		{key: "DATABASE_URL", value: cfg.DatabaseURL},
 		{key: "TELEGRAM_BOT_TOKEN", value: cfg.TelegramBotToken},
 		{key: "TELEGRAM_WEBHOOK_SECRET", value: cfg.TelegramWebhookSecret},
-		{key: "PAYMENT_PROVIDER_NAME", value: cfg.PaymentProviderName},
-		{key: "PAYMENT_PROVIDER_CLIENT_ID", value: cfg.PaymentProviderClientID},
-		{key: "PAYMENT_PROVIDER_SECRET", value: cfg.PaymentProviderSecret},
-		{key: "PAYMENT_PROVIDER_BASE_URL", value: cfg.PaymentProviderBaseURL},
-		{key: "PAYMENT_PROVIDER_WEBHOOK_ID", value: cfg.PaymentProviderWebhookID},
 		{key: "ADMIN_BASIC_AUTH_USER", value: cfg.AdminBasicAuthUser},
 		{key: "ADMIN_BASIC_AUTH_PASS", value: cfg.AdminBasicAuthPass},
 		{key: "COUPON_ENCRYPTION_KEY", value: cfg.CouponEncryptionKey},
@@ -348,14 +343,6 @@ func validateDatabaseConfig(cfg Config) error {
 	case "", "cache_statement", "cache_describe", "describe_exec", "exec", "simple_protocol":
 	default:
 		return fmt.Errorf("DATABASE_QUERY_EXEC_MODE must be one of: cache_statement, cache_describe, describe_exec, exec, simple_protocol")
-	}
-
-	if cfg.PaymentProviderName != "paypal" {
-		return fmt.Errorf("PAYMENT_PROVIDER_NAME must be paypal")
-	}
-
-	if cfg.PaymentProviderBaseURL != "https://api-m.sandbox.paypal.com" && cfg.PaymentProviderBaseURL != "https://api-m.paypal.com" {
-		return fmt.Errorf("PAYMENT_PROVIDER_BASE_URL must be https://api-m.sandbox.paypal.com or https://api-m.paypal.com")
 	}
 
 	return nil

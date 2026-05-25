@@ -5,14 +5,11 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
-	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/ethanb1996/couponsTelBot/apps/api/internal/admin"
 	"github.com/ethanb1996/couponsTelBot/apps/api/internal/config"
-	"github.com/ethanb1996/couponsTelBot/apps/api/internal/payments"
 	"github.com/ethanb1996/couponsTelBot/apps/api/internal/security"
 	"github.com/ethanb1996/couponsTelBot/apps/api/internal/store"
 	"github.com/ethanb1996/couponsTelBot/apps/api/internal/telegram"
@@ -25,9 +22,8 @@ type Dependencies struct {
 }
 
 type Router struct {
-	Handler        http.Handler
-	PaymentService *payments.Service
-	BotService     *telegram.BotService
+	Handler    http.Handler
+	BotService *telegram.BotService
 }
 
 func NewRouter(deps Dependencies) (Router, error) {
@@ -50,18 +46,7 @@ func NewRouter(deps Dependencies) (Router, error) {
 		return Router{}, err
 	}
 
-	paymentService, err := payments.NewService(deps.Logger, deps.Store, deps.Config, botService)
-	if err != nil {
-		return Router{}, err
-	}
-	botService.SetCheckoutStarter(paymentService)
-
 	telegramHandler := telegram.NewWebhookHandler(deps.Logger, deps.Config.TelegramWebhookSecret, botService)
-	paymentHandler := payments.NewWebhookHandler(
-		deps.Logger,
-		deps.Config.PaymentProviderName,
-		paymentService,
-	)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", healthHandler(deps.Store))
@@ -70,10 +55,6 @@ func NewRouter(deps Dependencies) (Router, error) {
 		http.Redirect(w, r, "/admin/", http.StatusSeeOther)
 	})
 	mux.HandleFunc("/webhooks/telegram", telegramHandler.ServeHTTP)
-	mux.HandleFunc("/webhooks/payments/", paymentHandler.ServeHTTP)
-	mux.HandleFunc("/payments/paypal/return", payments.ReturnPage)
-	mux.HandleFunc("/payments/paypal/cancel", payments.CancelPage)
-	mux.HandleFunc("/assets/coupons/", couponPhotoHandler(filepath.Join("data", "photos")))
 
 	return Router{
 		Handler: Chain(
@@ -83,33 +64,8 @@ func NewRouter(deps Dependencies) (Router, error) {
 			WithSecurityHeaders(),
 			WithAccessLog(deps.Logger),
 		),
-		PaymentService: paymentService,
-		BotService:     botService,
+		BotService: botService,
 	}, nil
-}
-
-func couponPhotoHandler(baseDir string) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			http.Error(w, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
-			return
-		}
-
-		photoKey := strings.TrimSpace(strings.TrimPrefix(r.URL.Path, "/assets/coupons/"))
-		if photoKey == "" || strings.Contains(photoKey, "/") || strings.Contains(photoKey, `\`) {
-			http.NotFound(w, r)
-			return
-		}
-
-		filePath := filepath.Join(baseDir, photoKey)
-		info, err := os.Stat(filePath)
-		if err != nil || info.IsDir() {
-			http.NotFound(w, r)
-			return
-		}
-
-		http.ServeFile(w, r, filePath)
-	}
 }
 
 func healthHandler(db *store.Postgres) http.HandlerFunc {
