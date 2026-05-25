@@ -27,11 +27,6 @@ type Config struct {
 	DatabaseQueryExecMode     string
 	TelegramBotToken          string
 	TelegramWebhookSecret     string
-	PaymentProviderName       string
-	PaymentProviderClientID   string
-	PaymentProviderSecret     string
-	PaymentProviderBaseURL    string
-	PaymentProviderWebhookID  string
 	AdminBasicAuthUser        string
 	AdminBasicAuthPass        string
 	CouponEncryptionKey       string
@@ -117,11 +112,6 @@ func Load() (Config, error) {
 		DatabaseQueryExecMode:     strings.ToLower(envWithDefault("DATABASE_QUERY_EXEC_MODE", "exec")),
 		TelegramBotToken:          strings.TrimSpace(os.Getenv("TELEGRAM_BOT_TOKEN")),
 		TelegramWebhookSecret:     strings.TrimSpace(os.Getenv("TELEGRAM_WEBHOOK_SECRET")),
-		PaymentProviderName:       strings.TrimSpace(os.Getenv("PAYMENT_PROVIDER_NAME")),
-		PaymentProviderClientID:   strings.TrimSpace(os.Getenv("PAYMENT_PROVIDER_CLIENT_ID")),
-		PaymentProviderSecret:     strings.TrimSpace(os.Getenv("PAYMENT_PROVIDER_SECRET")),
-		PaymentProviderBaseURL:    strings.TrimSpace(os.Getenv("PAYMENT_PROVIDER_BASE_URL")),
-		PaymentProviderWebhookID:  strings.TrimSpace(os.Getenv("PAYMENT_PROVIDER_WEBHOOK_ID")),
 		AdminBasicAuthUser:        strings.TrimSpace(os.Getenv("ADMIN_BASIC_AUTH_USER")),
 		AdminBasicAuthPass:        strings.TrimSpace(os.Getenv("ADMIN_BASIC_AUTH_PASS")),
 		CouponEncryptionKey:       strings.TrimSpace(os.Getenv("COUPON_ENCRYPTION_KEY")),

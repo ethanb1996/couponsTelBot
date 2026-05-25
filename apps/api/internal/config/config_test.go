@@ -37,11 +37,6 @@ func TestLoadAppliesDefaultsForOptionalEnvironmentVariables(t *testing.T) {
 	t.Setenv("DATABASE_URL", "postgres://example")
 	t.Setenv("TELEGRAM_BOT_TOKEN", "bot-token")
 	t.Setenv("TELEGRAM_WEBHOOK_SECRET", "telegram-secret")
-	t.Setenv("PAYMENT_PROVIDER_NAME", "paypal")
-	t.Setenv("PAYMENT_PROVIDER_CLIENT_ID", "paypal-client-id")
-	t.Setenv("PAYMENT_PROVIDER_SECRET", "provider-secret")
-	t.Setenv("PAYMENT_PROVIDER_BASE_URL", "https://api-m.sandbox.paypal.com")
-	t.Setenv("PAYMENT_PROVIDER_WEBHOOK_ID", "provider-webhook-id")
 	t.Setenv("ADMIN_BASIC_AUTH_USER", "admin")
 	t.Setenv("ADMIN_BASIC_AUTH_PASS", "password")
 	t.Setenv("COUPON_ENCRYPTION_KEY", strings.Repeat("a", 32))
@@ -136,11 +131,6 @@ func TestLoadAppliesExplicitDatabaseSettings(t *testing.T) {
 	t.Setenv("OPS_BATCH_SIZE", "15")
 	t.Setenv("TELEGRAM_BOT_TOKEN", "bot-token")
 	t.Setenv("TELEGRAM_WEBHOOK_SECRET", "telegram-secret")
-	t.Setenv("PAYMENT_PROVIDER_NAME", "paypal")
-	t.Setenv("PAYMENT_PROVIDER_CLIENT_ID", "paypal-client-id")
-	t.Setenv("PAYMENT_PROVIDER_SECRET", "provider-secret")
-	t.Setenv("PAYMENT_PROVIDER_BASE_URL", "https://api-m.sandbox.paypal.com")
-	t.Setenv("PAYMENT_PROVIDER_WEBHOOK_ID", "provider-webhook-id")
 	t.Setenv("ADMIN_BASIC_AUTH_USER", "admin")
 	t.Setenv("ADMIN_BASIC_AUTH_PASS", "password")
 	t.Setenv("COUPON_ENCRYPTION_KEY", strings.Repeat("a", 32))
@@ -208,11 +198,6 @@ func TestLoadRejectsInvalidDatabaseSettings(t *testing.T) {
 	t.Setenv("DATABASE_CONNECT_TIMEOUT", "not-a-duration")
 	t.Setenv("TELEGRAM_BOT_TOKEN", "bot-token")
 	t.Setenv("TELEGRAM_WEBHOOK_SECRET", "telegram-secret")
-	t.Setenv("PAYMENT_PROVIDER_NAME", "paypal")
-	t.Setenv("PAYMENT_PROVIDER_CLIENT_ID", "paypal-client-id")
-	t.Setenv("PAYMENT_PROVIDER_SECRET", "provider-secret")
-	t.Setenv("PAYMENT_PROVIDER_BASE_URL", "https://api-m.sandbox.paypal.com")
-	t.Setenv("PAYMENT_PROVIDER_WEBHOOK_ID", "provider-webhook-id")
 	t.Setenv("ADMIN_BASIC_AUTH_USER", "admin")
 	t.Setenv("ADMIN_BASIC_AUTH_PASS", "password")
 	t.Setenv("COUPON_ENCRYPTION_KEY", strings.Repeat("a", 32))
@@ -232,11 +217,6 @@ func TestLoadRejectsInvalidDatabaseQueryExecMode(t *testing.T) {
 	t.Setenv("DATABASE_QUERY_EXEC_MODE", "prepared")
 	t.Setenv("TELEGRAM_BOT_TOKEN", "bot-token")
 	t.Setenv("TELEGRAM_WEBHOOK_SECRET", "telegram-secret")
-	t.Setenv("PAYMENT_PROVIDER_NAME", "paypal")
-	t.Setenv("PAYMENT_PROVIDER_CLIENT_ID", "paypal-client-id")
-	t.Setenv("PAYMENT_PROVIDER_SECRET", "provider-secret")
-	t.Setenv("PAYMENT_PROVIDER_BASE_URL", "https://api-m.sandbox.paypal.com")
-	t.Setenv("PAYMENT_PROVIDER_WEBHOOK_ID", "provider-webhook-id")
 	t.Setenv("ADMIN_BASIC_AUTH_USER", "admin")
 	t.Setenv("ADMIN_BASIC_AUTH_PASS", "password")
 	t.Setenv("COUPON_ENCRYPTION_KEY", strings.Repeat("a", 32))
@@ -256,11 +236,6 @@ func TestLoadRejectsUnsupportedCouponEncryptionKeyLength(t *testing.T) {
 	t.Setenv("DATABASE_URL", "postgres://example")
 	t.Setenv("TELEGRAM_BOT_TOKEN", "bot-token")
 	t.Setenv("TELEGRAM_WEBHOOK_SECRET", "telegram-secret")
-	t.Setenv("PAYMENT_PROVIDER_NAME", "paypal")
-	t.Setenv("PAYMENT_PROVIDER_CLIENT_ID", "paypal-client-id")
-	t.Setenv("PAYMENT_PROVIDER_SECRET", "provider-secret")
-	t.Setenv("PAYMENT_PROVIDER_BASE_URL", "https://api-m.sandbox.paypal.com")
-	t.Setenv("PAYMENT_PROVIDER_WEBHOOK_ID", "provider-webhook-id")
 	t.Setenv("ADMIN_BASIC_AUTH_USER", "admin")
 	t.Setenv("ADMIN_BASIC_AUTH_PASS", "password")
 	t.Setenv("COUPON_ENCRYPTION_KEY", "short-key")
@@ -285,11 +260,6 @@ func TestLoadReadsDotEnvFromCurrentWorkingDirectory(t *testing.T) {
 		`DATABASE_URL="postgres://postgres:postgres@localhost:5432/coupons?sslmode=disable"`,
 		"TELEGRAM_BOT_TOKEN=dotenv-bot-token",
 		"TELEGRAM_WEBHOOK_SECRET=dotenv-telegram-secret",
-		"PAYMENT_PROVIDER_NAME=paypal",
-		"PAYMENT_PROVIDER_CLIENT_ID=dotenv-paypal-client-id",
-		"PAYMENT_PROVIDER_SECRET=dotenv-provider-secret",
-		"PAYMENT_PROVIDER_BASE_URL=https://api-m.sandbox.paypal.com",
-		"PAYMENT_PROVIDER_WEBHOOK_ID=dotenv-provider-webhook-id",
 		"ADMIN_BASIC_AUTH_USER=dotenv-admin",
 		"ADMIN_BASIC_AUTH_PASS=dotenv-password",
 		"COUPON_ENCRYPTION_KEY=" + strings.Repeat("a", 32),
@@ -319,11 +289,6 @@ func TestLoadReadsDotEnvFromCurrentWorkingDirectory(t *testing.T) {
 		"OPS_BATCH_SIZE",
 		"TELEGRAM_BOT_TOKEN",
 		"TELEGRAM_WEBHOOK_SECRET",
-		"PAYMENT_PROVIDER_NAME",
-		"PAYMENT_PROVIDER_CLIENT_ID",
-		"PAYMENT_PROVIDER_SECRET",
-		"PAYMENT_PROVIDER_BASE_URL",
-		"PAYMENT_PROVIDER_WEBHOOK_ID",
 		"ADMIN_BASIC_AUTH_USER",
 		"ADMIN_BASIC_AUTH_PASS",
 		"COUPON_ENCRYPTION_KEY",

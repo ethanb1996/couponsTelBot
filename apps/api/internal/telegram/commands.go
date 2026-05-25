@@ -15,7 +15,6 @@ import (
 	"unicode/utf8"
 
 	"github.com/ethanb1996/couponsTelBot/apps/api/internal/config"
-	"github.com/ethanb1996/couponsTelBot/apps/api/internal/payments"
 	"github.com/ethanb1996/couponsTelBot/apps/api/internal/services"
 	"github.com/ethanb1996/couponsTelBot/apps/api/internal/store"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
@@ -33,17 +32,12 @@ const (
 )
 
 type BotService struct {
-	logger          *slog.Logger
-	store           *store.Postgres
-	botAPI          *tgbotapi.BotAPI
-	config          *config.Config
-	checkoutStarter CheckoutStarter
-	payBox          PayBoxFlow
-	pendingClaims   *pendingPayBoxClaims
-}
-
-type CheckoutStarter interface {
-	StartCheckout(ctx context.Context, order store.Order, listing store.Listing) (payments.CheckoutLink, error)
+	logger        *slog.Logger
+	store         *store.Postgres
+	botAPI        *tgbotapi.BotAPI
+	config        *config.Config
+	payBox        PayBoxFlow
+	pendingClaims *pendingPayBoxClaims
 }
 
 type PayBoxFlow interface {
@@ -69,10 +63,6 @@ func NewBotService(logger *slog.Logger, repo *store.Postgres, botToken string, c
 		config:        cfg,
 		pendingClaims: newPendingPayBoxClaims(),
 	}, nil
-}
-
-func (s *BotService) SetCheckoutStarter(checkoutStarter CheckoutStarter) {
-	s.checkoutStarter = checkoutStarter
 }
 
 func (s *BotService) SetPayBoxFlow(payBox PayBoxFlow) {
@@ -307,8 +297,8 @@ func (s *BotService) handleAnotherOffer(ctx context.Context, chatID int64, curre
 	return s.sendFeaturedOffer(ctx, chatID, offers, nextIndex)
 }
 
-func (s *BotService) handleBuyListing(ctx context.Context, callback *tgbotapi.CallbackQuery, listingID int64) error {
-	return s.startCheckoutFromCallback(ctx, callback, listingID)
+func (s *BotService) handleBuyListing(ctx context.Context, callback *tgbotapi.CallbackQuery, _ int64) error {
+	return s.handleLegacyListingBuy(ctx, callback.Message.Chat.ID)
 }
 
 func (s *BotService) handleViewDetails(ctx context.Context, chatID int64, listingID int64) error {
@@ -342,86 +332,15 @@ func (s *BotService) handleAnotherDeal(ctx context.Context, chatID int64, curren
 	return s.sendFeaturedListing(ctx, chatID, listings, nextIndex)
 }
 
-func (s *BotService) handleConfirmBuy(ctx context.Context, callback *tgbotapi.CallbackQuery, listingID int64) error {
-	return s.startCheckoutFromCallback(ctx, callback, listingID)
+func (s *BotService) handleConfirmBuy(ctx context.Context, callback *tgbotapi.CallbackQuery, _ int64) error {
+	return s.handleLegacyListingBuy(ctx, callback.Message.Chat.ID)
 }
 
-func (s *BotService) startCheckoutFromCallback(ctx context.Context, callback *tgbotapi.CallbackQuery, listingID int64) error {
-	if s.checkoutStarter == nil {
-		s.logger.Error("checkout starter is not configured")
-		return s.sendMessage(ctx, callback.Message.Chat.ID, "Payment is temporarily unavailable. Please try again later.")
+func (s *BotService) handleLegacyListingBuy(ctx context.Context, chatID int64) error {
+	if s.payBox != nil {
+		return s.sendStartOffers(ctx, chatID)
 	}
-
-	user, err := s.getOrCreateUser(ctx, callback.From)
-	if err != nil {
-		s.logger.Error("failed to get user", "error", err, "telegram_user_id", callback.From.ID)
-		return nil
-	}
-
-	listing, err := s.store.GetListing(ctx, listingID)
-	if err != nil {
-		s.logger.Error("failed to get listing for checkout", "error", err, "listing_id", listingID)
-		return s.sendMessage(ctx, callback.Message.Chat.ID, "Unable to load this coupon right now. Please try again.")
-	}
-
-	orderNumber := fmt.Sprintf("ORD-%d-%d", callback.From.ID, time.Now().Unix())
-	params := store.CreateDraftOrderParams{
-		UserID:                  user.ID,
-		ListingID:               listingID,
-		OrderNumber:             orderNumber,
-		FinalSaleAcknowledgedAt: time.Now(),
-	}
-
-	order, err := s.store.CreateDraftOrder(ctx, params)
-	if err != nil {
-		s.logger.Error("failed to create draft order", "error", err, "user_id", user.ID, "listing_id", listingID)
-		msg := "Unable to process order. Please try again."
-		if err == store.ErrListingSoldOut {
-			msg = "This coupon is sold out. Please choose another."
-		}
-		if err == store.ErrListingInactive {
-			msg = "This listing is still in preview. Publish it in admin before testing checkout."
-		}
-		return s.sendMessage(ctx, callback.Message.Chat.ID, msg)
-	}
-
-	checkout, err := s.checkoutStarter.StartCheckout(ctx, order, listing)
-	if err != nil {
-		s.logger.Error("failed to start paypal checkout", "error", err, "order_id", order.ID, "listing_id", listingID)
-		return s.sendMessage(ctx, callback.Message.Chat.ID, "We could not start the PayPal checkout. Please try again in a moment.")
-	}
-
-	checkoutText := fmt.Sprintf(`<b>Checkout ready:</b> %s
-
-<b>Coupon:</b> %s - %s
-<b>Amount:</b> %s
-
-This coupon is reserved for %s while you complete payment.
-
-Tap the PayPal button below to complete payment. We will deliver the coupon in Telegram after PayPal confirms the payment.`,
-		order.OrderNumber,
-		listing.MerchantName,
-		listing.Title,
-		formatPrice(order.SalePriceAmount),
-		formatHoldDuration(s.config.OpsCheckoutHoldDuration),
-	)
-
-	msg := tgbotapi.NewMessage(callback.Message.Chat.ID, normalizeTelegramText(checkoutText))
-	msg.ParseMode = tgbotapi.ModeHTML
-	msg.ReplyMarkup = tgbotapi.NewInlineKeyboardMarkup(
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonURL("🅿️ לתשלום ב-PayPal", checkout.ApprovalURL),
-		),
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("\U0001F449 \u05d3\u05d9\u05dc \u05d0\u05d7\u05e8", formatCallbackData(CallbackAnotherDeal, listing.ID)),
-		),
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("Support", formatCallbackData(CallbackContactSupport, listing.ID)),
-		),
-	)
-
-	_, err = s.botAPI.Send(msg)
-	return err
+	return s.sendMessage(ctx, chatID, "This checkout flow is no longer available. Send /start to see the current catalog.")
 }
 
 func (s *BotService) handleContactSupport(ctx context.Context, chatID int64) error {
