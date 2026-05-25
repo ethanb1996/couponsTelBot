@@ -1,0 +1,373 @@
+package services
+
+import (
+	"context"
+	"errors"
+	"io"
+	"log/slog"
+	"strings"
+	"testing"
+
+	"github.com/ethanb1996/couponsTelBot/apps/api/internal/store"
+)
+
+func TestPayBoxServiceStartPaymentCreatesAwaitingPaymentOrder(t *testing.T) {
+	t.Parallel()
+
+	payboxStore := &stubPayBoxStore{
+		offer: store.Offer{
+			ID:                     77,
+			MerchantName:           "Cafe Local",
+			Title:                  "Breakfast deal",
+			PaymentLink:            "https://paybox.example/cafe",
+			MerchantDisclosureText: "Sold with Cafe Local approval.",
+			RedemptionTerms:        "Show the code at checkout.",
+			SupportContact:         "@cafe_support",
+		},
+		order: store.MVPOrder{
+			ID:                501,
+			UserID:            11,
+			OfferID:           77,
+			OrderNumber:       "PB-501",
+			OfferTitle:        "Breakfast deal",
+			MerchantName:      "Cafe Local",
+			PriceAmount:       4900,
+			CurrencyCode:      "ILS",
+			PayBoxPaymentLink: "https://paybox.example/cafe",
+			RedemptionTerms:   "Show the code at checkout.",
+			SupportContact:    "@cafe_support",
+		},
+	}
+
+	service := newTestPayBoxService(t, payboxStore, &stubPayBoxMessenger{}, nil, nil, fixedOrderNumberer{value: "PB-501"})
+	start, err := service.StartPayment(context.Background(), 11, 77)
+	if err != nil {
+		t.Fatalf("expected start payment to succeed, got %v", err)
+	}
+
+	if payboxStore.createdOrder.OrderNumber != "PB-501" || payboxStore.createdOrder.UserID != 11 || payboxStore.createdOrder.OfferID != 77 {
+		t.Fatalf("unexpected created order params: %+v", payboxStore.createdOrder)
+	}
+	if start.PaymentLink != "https://paybox.example/cafe" {
+		t.Fatalf("expected PayBox link in response, got %q", start.PaymentLink)
+	}
+	if !strings.Contains(start.NextStepMessage, "PayBox username") {
+		t.Fatalf("expected claim instructions, got %q", start.NextStepMessage)
+	}
+	if start.MerchantDisclosureText != "Sold with Cafe Local approval." {
+		t.Fatalf("expected disclosure snapshot, got %q", start.MerchantDisclosureText)
+	}
+}
+
+func TestPayBoxServiceSubmitPaymentClaimNotifiesAdmin(t *testing.T) {
+	t.Parallel()
+
+	payboxStore := &stubPayBoxStore{
+		claim: store.ManualPaymentClaim{
+			ID:            901,
+			OrderID:       501,
+			PayerUsername: "buyer-paybox",
+			ClaimedAmount: 4900,
+		},
+	}
+	admin := &stubPayBoxAdminNotifier{}
+	service := newTestPayBoxService(t, payboxStore, &stubPayBoxMessenger{}, admin, nil, fixedOrderNumberer{})
+
+	claim, err := service.SubmitPaymentClaim(context.Background(), 501, "buyer-paybox", 0)
+	if err != nil {
+		t.Fatalf("expected claim submission to succeed, got %v", err)
+	}
+
+	if claim.ID != 901 {
+		t.Fatalf("expected claim 901, got %+v", claim)
+	}
+	if payboxStore.submittedClaim.PayerUsername != "buyer-paybox" {
+		t.Fatalf("unexpected submitted claim params: %+v", payboxStore.submittedClaim)
+	}
+	if len(admin.submittedClaims) != 1 || admin.submittedClaims[0].ID != 901 {
+		t.Fatalf("expected one admin notification, got %+v", admin.submittedClaims)
+	}
+}
+
+func TestPayBoxServiceApproveClaimDeliversCodeAndNotifiesAdmin(t *testing.T) {
+	t.Parallel()
+
+	codeID := int64(7001)
+	payboxStore := &stubPayBoxStore{
+		user: store.User{ID: 11, TelegramUserID: 1111},
+		approval: store.ApproveManualPaymentClaimResult{
+			Order: store.MVPOrder{
+				ID:               501,
+				UserID:           11,
+				OrderNumber:      "PB-501",
+				PredefinedCodeID: &codeID,
+				RedemptionTerms:  "Show the code at checkout.",
+				SupportContact:   "@support",
+			},
+			Claim: store.ManualPaymentClaim{ID: 901, OrderID: 501},
+			Code:  &store.PredefinedCode{ID: codeID, CodeEncrypted: []byte("cipher"), CodeMaskedDisplay: "***1234"},
+		},
+		delivery: store.MVPDelivery{ID: 3001, OrderID: 501, PredefinedCodeID: codeID, Status: "confirmed"},
+	}
+	messenger := &stubPayBoxMessenger{}
+	admin := &stubPayBoxAdminNotifier{}
+	renderer := stubPayBoxCodeRenderer{code: "CODE-1234"}
+	service := newTestPayBoxService(t, payboxStore, messenger, admin, renderer, fixedOrderNumberer{})
+
+	result, err := service.ApproveClaim(context.Background(), 901, "admin-1", "matched")
+	if err != nil {
+		t.Fatalf("expected approval to succeed, got %v", err)
+	}
+
+	if result.Delivery == nil || result.Delivery.ID != 3001 {
+		t.Fatalf("expected delivery result, got %+v", result.Delivery)
+	}
+	if len(messenger.messages) != 1 || !strings.Contains(messenger.messages[0], "<code>CODE-1234</code>") {
+		t.Fatalf("expected code delivery message, got %+v", messenger.messages)
+	}
+	if payboxStore.recordedDelivery.Status != "confirmed" || payboxStore.recordedDelivery.PredefinedCodeID != codeID {
+		t.Fatalf("unexpected recorded delivery params: %+v", payboxStore.recordedDelivery)
+	}
+	if len(admin.approvedResults) != 1 || admin.approvedResults[0].Order.ID != 501 {
+		t.Fatalf("expected admin approval notification, got %+v", admin.approvedResults)
+	}
+}
+
+func TestPayBoxServiceApproveClaimWithoutCodeNotifiesSupportState(t *testing.T) {
+	t.Parallel()
+
+	payboxStore := &stubPayBoxStore{
+		user: store.User{ID: 11, TelegramUserID: 1111},
+		approval: store.ApproveManualPaymentClaimResult{
+			Order: store.MVPOrder{ID: 501, UserID: 11, OrderNumber: "PB-501"},
+			Claim: store.ManualPaymentClaim{ID: 901, OrderID: 501},
+		},
+	}
+	messenger := &stubPayBoxMessenger{}
+	admin := &stubPayBoxAdminNotifier{}
+	service := newTestPayBoxService(t, payboxStore, messenger, admin, stubPayBoxCodeRenderer{}, fixedOrderNumberer{})
+
+	result, err := service.ApproveClaim(context.Background(), 901, "admin-1", "matched")
+	if err != nil {
+		t.Fatalf("expected approval without code to succeed, got %v", err)
+	}
+
+	if !result.SupportState {
+		t.Fatal("expected support state")
+	}
+	if len(messenger.messages) != 1 || !strings.Contains(messenger.messages[0], "manual support") {
+		t.Fatalf("expected support message, got %+v", messenger.messages)
+	}
+	if len(admin.supportResults) != 1 {
+		t.Fatalf("expected support notification, got %+v", admin.supportResults)
+	}
+}
+
+func TestPayBoxServiceRejectClaimNotifiesBuyerAndAdmin(t *testing.T) {
+	t.Parallel()
+
+	payboxStore := &stubPayBoxStore{
+		user:          store.User{ID: 11, TelegramUserID: 1111},
+		rejectedClaim: store.ManualPaymentClaim{ID: 901, OrderID: 501},
+		rejectedOrder: store.MVPOrder{ID: 501, UserID: 11, OrderNumber: "PB-501"},
+	}
+	messenger := &stubPayBoxMessenger{}
+	admin := &stubPayBoxAdminNotifier{}
+	service := newTestPayBoxService(t, payboxStore, messenger, admin, nil, fixedOrderNumberer{})
+
+	claim, order, err := service.RejectClaim(context.Background(), 901, "admin-1", "not matched")
+	if err != nil {
+		t.Fatalf("expected rejection to succeed, got %v", err)
+	}
+
+	if claim.ID != 901 || order.ID != 501 {
+		t.Fatalf("unexpected rejection result: %+v %+v", claim, order)
+	}
+	if len(messenger.messages) != 1 || !strings.Contains(messenger.messages[0], "could not match") {
+		t.Fatalf("expected buyer rejection message, got %+v", messenger.messages)
+	}
+	if len(admin.rejectedClaims) != 1 {
+		t.Fatalf("expected admin rejection notification, got %+v", admin.rejectedClaims)
+	}
+}
+
+func TestPayBoxServiceRecordsFailedDelivery(t *testing.T) {
+	t.Parallel()
+
+	codeID := int64(7001)
+	payboxStore := &stubPayBoxStore{
+		user: store.User{ID: 11, TelegramUserID: 1111},
+	}
+	messenger := &stubPayBoxMessenger{err: errors.New("telegram down")}
+	renderer := stubPayBoxCodeRenderer{code: "CODE-1234"}
+	service := newTestPayBoxService(t, payboxStore, messenger, nil, renderer, fixedOrderNumberer{})
+
+	_, err := service.DeliverApprovedCode(context.Background(), store.MVPOrder{
+		ID:               501,
+		UserID:           11,
+		PredefinedCodeID: &codeID,
+	}, store.PredefinedCode{ID: codeID})
+	if err == nil {
+		t.Fatal("expected delivery to fail")
+	}
+
+	if payboxStore.recordedDelivery.Status != "failed" || payboxStore.recordedDelivery.FailureReason != "telegram down" {
+		t.Fatalf("expected failed delivery record, got %+v", payboxStore.recordedDelivery)
+	}
+}
+
+func TestBuildPayBoxCodeMessageEscapesCodeAndTerms(t *testing.T) {
+	t.Parallel()
+
+	got := buildPayBoxCodeMessage(`A<&>"'`, "Use <today>", "@support", "")
+	if !strings.Contains(got, "<code>A&lt;&amp;&gt;&quot;&#39;</code>") {
+		t.Fatalf("expected escaped code, got %q", got)
+	}
+	if !strings.Contains(got, "Use &lt;today&gt;") {
+		t.Fatalf("expected escaped terms, got %q", got)
+	}
+}
+
+func newTestPayBoxService(t *testing.T, store PayBoxStore, messenger PayBoxMessenger, admin PayBoxAdminNotifier, renderer PayBoxCodeRenderer, orderNumberer OrderNumberGenerator) *PayBoxService {
+	t.Helper()
+
+	service, err := NewPayBoxService(PayBoxServiceOptions{
+		Logger:         slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Store:          store,
+		Messenger:      messenger,
+		AdminNotifier:  admin,
+		CodeRenderer:   renderer,
+		OrderNumberer:  orderNumberer,
+		SupportContact: "@support",
+	})
+	if err != nil {
+		t.Fatalf("new service: %v", err)
+	}
+	return service
+}
+
+type stubPayBoxStore struct {
+	offer            store.Offer
+	order            store.MVPOrder
+	claim            store.ManualPaymentClaim
+	approval         store.ApproveManualPaymentClaimResult
+	rejectedClaim    store.ManualPaymentClaim
+	rejectedOrder    store.MVPOrder
+	delivery         store.MVPDelivery
+	user             store.User
+	createdOrder     store.CreateAwaitingPaymentOrderParams
+	submittedClaim   store.SubmitManualPaymentClaimParams
+	reviewedClaim    store.ReviewManualPaymentClaimParams
+	recordedDelivery store.RecordPredefinedCodeDeliveryEventParams
+	pendingClaims    []store.ManualPaymentClaim
+}
+
+func (s *stubPayBoxStore) ListActiveOffers(ctx context.Context, limit int) ([]store.Offer, error) {
+	return []store.Offer{s.offer}, nil
+}
+
+func (s *stubPayBoxStore) GetOffer(ctx context.Context, offerID int64) (store.Offer, error) {
+	return s.offer, nil
+}
+
+func (s *stubPayBoxStore) CreateAwaitingPaymentOrder(ctx context.Context, params store.CreateAwaitingPaymentOrderParams) (store.MVPOrder, error) {
+	s.createdOrder = params
+	return s.order, nil
+}
+
+func (s *stubPayBoxStore) SubmitManualPaymentClaim(ctx context.Context, params store.SubmitManualPaymentClaimParams) (store.ManualPaymentClaim, error) {
+	s.submittedClaim = params
+	return s.claim, nil
+}
+
+func (s *stubPayBoxStore) ListPendingManualPaymentClaims(ctx context.Context, limit int) ([]store.ManualPaymentClaim, error) {
+	return s.pendingClaims, nil
+}
+
+func (s *stubPayBoxStore) ApproveManualPaymentClaim(ctx context.Context, params store.ReviewManualPaymentClaimParams) (store.ApproveManualPaymentClaimResult, error) {
+	s.reviewedClaim = params
+	return s.approval, nil
+}
+
+func (s *stubPayBoxStore) RejectManualPaymentClaim(ctx context.Context, params store.ReviewManualPaymentClaimParams) (store.ManualPaymentClaim, store.MVPOrder, error) {
+	s.reviewedClaim = params
+	return s.rejectedClaim, s.rejectedOrder, nil
+}
+
+func (s *stubPayBoxStore) RecordPredefinedCodeDeliveryEvent(ctx context.Context, params store.RecordPredefinedCodeDeliveryEventParams) (store.MVPDelivery, error) {
+	s.recordedDelivery = params
+	if s.delivery.ID != 0 {
+		return s.delivery, nil
+	}
+	return store.MVPDelivery{ID: 1, OrderID: params.OrderID, PredefinedCodeID: params.PredefinedCodeID, Status: params.Status}, nil
+}
+
+func (s *stubPayBoxStore) GetUserByID(ctx context.Context, userID int64) (store.User, error) {
+	if s.user.ID == 0 {
+		return store.User{ID: userID, TelegramUserID: userID}, nil
+	}
+	return s.user, nil
+}
+
+type stubPayBoxMessenger struct {
+	messages []string
+	err      error
+}
+
+func (s *stubPayBoxMessenger) SendHTMLMessage(ctx context.Context, telegramUserID int64, text string) (int64, error) {
+	s.messages = append(s.messages, text)
+	if s.err != nil {
+		return 0, s.err
+	}
+	return int64(9000 + len(s.messages)), nil
+}
+
+type stubPayBoxAdminNotifier struct {
+	submittedClaims []store.ManualPaymentClaim
+	approvedResults []PayBoxApprovalResult
+	rejectedClaims  []store.ManualPaymentClaim
+	supportResults  []PayBoxApprovalResult
+}
+
+func (s *stubPayBoxAdminNotifier) NotifyPaymentClaimSubmitted(ctx context.Context, claim store.ManualPaymentClaim) error {
+	s.submittedClaims = append(s.submittedClaims, claim)
+	return nil
+}
+
+func (s *stubPayBoxAdminNotifier) NotifyPaymentClaimApproved(ctx context.Context, result PayBoxApprovalResult) error {
+	s.approvedResults = append(s.approvedResults, result)
+	return nil
+}
+
+func (s *stubPayBoxAdminNotifier) NotifyPaymentClaimRejected(ctx context.Context, claim store.ManualPaymentClaim, order store.MVPOrder) error {
+	s.rejectedClaims = append(s.rejectedClaims, claim)
+	return nil
+}
+
+func (s *stubPayBoxAdminNotifier) NotifyPaymentClaimNeedsSupport(ctx context.Context, result PayBoxApprovalResult) error {
+	s.supportResults = append(s.supportResults, result)
+	return nil
+}
+
+type stubPayBoxCodeRenderer struct {
+	code string
+	err  error
+}
+
+func (s stubPayBoxCodeRenderer) RenderPredefinedCode(ctx context.Context, code store.PredefinedCode) (string, error) {
+	if s.err != nil {
+		return "", s.err
+	}
+	return s.code, nil
+}
+
+type fixedOrderNumberer struct {
+	value string
+}
+
+func (f fixedOrderNumberer) NewOrderNumber() string {
+	if f.value == "" {
+		return "PB-fixed"
+	}
+	return f.value
+}
