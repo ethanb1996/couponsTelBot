@@ -373,22 +373,25 @@ func (p *Postgres) CreateAwaitingPaymentOrder(ctx context.Context, params Create
 		return MVPOrder{}, ErrOfferSoldOut
 	}
 
-	row := tx.QueryRow(ctx, mvpOrderSelectSQL(`
-		FROM (
-			INSERT INTO orders (
-				user_id,
-				offer_id,
-				order_number,
-				status,
-				currency_code,
-				sale_price_amount,
-				paybox_payment_link,
-				placed_at
-			) VALUES ($1, $2, $3, 'awaiting_payment', $4, $5, $6, NOW())
-			RETURNING *
-		) ord
+	query := `WITH new_order AS (
+		INSERT INTO orders (
+			user_id,
+			offer_id,
+			order_number,
+			status,
+			currency_code,
+			sale_price_amount,
+			paybox_payment_link,
+			placed_at
+		) VALUES ($1, $2, $3, 'awaiting_payment', $4, $5, $6, NOW())
+		RETURNING *
+	)
+	` + mvpOrderSelectSQL(`
+		FROM new_order ord
 		INNER JOIN offers o ON o.id = ord.offer_id
-	`),
+	`)
+
+	row := tx.QueryRow(ctx, query,
 		params.UserID,
 		offer.ID,
 		params.OrderNumber,

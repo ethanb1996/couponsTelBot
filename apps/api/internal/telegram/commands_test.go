@@ -254,6 +254,204 @@ func TestBotServiceChecksTelegramAdminAllowlist(t *testing.T) {
 	}
 }
 
+func TestRenderCouponTelegramMessageRendersDirectCoupon(t *testing.T) {
+	original := int64(7400)
+	total := int64(20)
+	sold := int64(0)
+
+	msg := renderCouponTelegramMessageAt(CouponMessageData{
+		BusinessName:     "La Capriza",
+		AreaLabel:        "Ashdod",
+		Category:         couponCategoryPizza,
+		Title:            "Family pizza + topping",
+		OriginalPriceILS: &original,
+		CouponPriceILS:   5900,
+		PayBoxURL:        "https://paybox.example/lacapriza",
+		TotalQuantity:    &total,
+		SoldQuantity:     &sold,
+		ValidTodayOnly:   true,
+		RedemptionInfo:   "Show the QR at the counter",
+		Status:           couponStatusActive,
+		DisplayVariant:   couponDisplayVariantDirect,
+	}, time.Date(2026, 5, 26, 12, 0, 0, 0, time.UTC))
+
+	if msg.ParseMode != tgbotapi.ModeHTML {
+		t.Fatalf("expected HTML parse mode, got %q", msg.ParseMode)
+	}
+	if !strings.Contains(msg.Text, "<s>74₪</s>") || !strings.Contains(msg.Text, "59₪") {
+		t.Fatalf("expected price anchor in message, got %q", msg.Text)
+	}
+	if len(msg.ReplyMarkup.InlineKeyboard) != 1 || len(msg.ReplyMarkup.InlineKeyboard[0]) != 1 {
+		t.Fatalf("expected one CTA button, got %#v", msg.ReplyMarkup)
+	}
+	if msg.ReplyMarkup.InlineKeyboard[0][0].URL == nil || *msg.ReplyMarkup.InlineKeyboard[0][0].URL != "https://paybox.example/lacapriza" {
+		t.Fatalf("expected paybox url button, got %#v", msg.ReplyMarkup.InlineKeyboard[0][0].URL)
+	}
+}
+
+func TestRenderCouponTelegramMessageUsesLiveScarcityCouponCopy(t *testing.T) {
+	available := int64(8)
+	original := int64(7400)
+
+	msg := renderCouponTelegramMessageAt(CouponMessageData{
+		BusinessName:      "לקפריזה | רובע י\"ב",
+		Category:          couponCategoryPizza,
+		Title:             "פיצה משפחתית + תוספת",
+		OriginalPriceILS:  &original,
+		CouponPriceILS:    5900,
+		PayBoxURL:         "https://paybox.example/lacapriza",
+		AvailableQuantity: &available,
+		Status:            couponStatusActive,
+	}, time.Date(2026, 5, 26, 12, 0, 0, 0, time.UTC))
+
+	for _, want := range []string{
+		"🍕 ערב פיצה?",
+		"לקפריזה | רובע י&#34;ב",
+		"פיצה משפחתית + תוספת",
+		"74₪ → 59₪",
+		"⚠ נשארו 8 קופונים",
+	} {
+		if !strings.Contains(msg.Text, want) {
+			t.Fatalf("expected %q in message, got %q", want, msg.Text)
+		}
+	}
+	if strings.Contains(msg.Text, "👇 קנה עכשיו") {
+		t.Fatalf("did not expect duplicated CTA in body, got %q", msg.Text)
+	}
+	if msg.ReplyMarkup.InlineKeyboard[0][0].Text != couponMessagingConfig.VariantCTALabels[couponDisplayVariantScarcity] {
+		t.Fatalf("expected scarcity CTA label, got %q", msg.ReplyMarkup.InlineKeyboard[0][0].Text)
+	}
+}
+
+func TestRenderCouponTelegramMessageDoesNotFakeScarcityWhenQuantityUnknown(t *testing.T) {
+	msg := renderCouponTelegramMessageAt(CouponMessageData{
+		BusinessName:   "Cafe",
+		Category:       couponCategoryCafe,
+		Title:          "Coffee and pastry",
+		CouponPriceILS: 2900,
+		PayBoxURL:      "https://paybox.example/cafe",
+		Status:         couponStatusActive,
+		DisplayVariant: couponDisplayVariantDirect,
+		RedemptionInfo: "Use at the counter",
+	}, time.Date(2026, 5, 26, 12, 0, 0, 0, time.UTC))
+
+	if strings.Contains(msg.Text, "\u05e0\u05e9\u05d0\u05e8\u05d5") {
+		t.Fatalf("did not expect fake scarcity line, got %q", msg.Text)
+	}
+}
+
+func TestRenderCouponTelegramMessageRendersPriceWithoutOriginalPrice(t *testing.T) {
+	msg := renderCouponTelegramMessageAt(CouponMessageData{
+		BusinessName:   "Cafe",
+		Category:       couponCategoryCafe,
+		Title:          "Coffee and pastry",
+		CouponPriceILS: 2900,
+		PayBoxURL:      "https://paybox.example/cafe",
+		Status:         couponStatusActive,
+	}, time.Date(2026, 5, 26, 12, 0, 0, 0, time.UTC))
+
+	if strings.Contains(msg.Text, "<s>") {
+		t.Fatalf("did not expect struck-through original price, got %q", msg.Text)
+	}
+	if !strings.Contains(msg.Text, "29₪") {
+		t.Fatalf("expected coupon price in message, got %q", msg.Text)
+	}
+}
+
+func TestRenderCouponTelegramMessageRendersSoldOutState(t *testing.T) {
+	available := int64(0)
+	msg := renderCouponTelegramMessageAt(CouponMessageData{
+		BusinessName:      "La Capriza",
+		Category:          couponCategoryPizza,
+		Title:             "Family pizza + topping",
+		CouponPriceILS:    5900,
+		PayBoxURL:         "https://paybox.example/lacapriza",
+		AvailableQuantity: &available,
+		Status:            couponStatusSoldOut,
+	}, time.Date(2026, 5, 26, 12, 0, 0, 0, time.UTC))
+
+	if !strings.Contains(msg.Text, "\u05d0\u05d6\u05dc") {
+		t.Fatalf("expected sold-out copy, got %q", msg.Text)
+	}
+}
+
+func TestRenderCouponTelegramMessageRendersExpiredState(t *testing.T) {
+	expiredAt := time.Date(2026, 5, 25, 20, 0, 0, 0, time.UTC)
+	msg := renderCouponTelegramMessageAt(CouponMessageData{
+		BusinessName:   "La Capriza",
+		Category:       couponCategoryPizza,
+		Title:          "Family pizza + topping",
+		CouponPriceILS: 5900,
+		PayBoxURL:      "https://paybox.example/lacapriza",
+		ValidUntil:     &expiredAt,
+		Status:         couponStatusActive,
+	}, time.Date(2026, 5, 26, 12, 0, 0, 0, time.UTC))
+
+	if !strings.Contains(msg.Text, "\u05d4\u05e1\u05ea\u05d9\u05d9\u05dd") {
+		t.Fatalf("expected expired copy, got %q", msg.Text)
+	}
+}
+
+func TestCouponMessageDataFromOfferUsesAvailableInventoryAsRealScarcity(t *testing.T) {
+	offer := store.Offer{
+		ID:                 77,
+		MerchantName:       "Pizza House",
+		Title:              "Family pizza",
+		Description:        "One large pie",
+		PriceAmount:        5900,
+		PaymentLink:        "https://paybox.example/pizza",
+		AvailableCodeCount: 4,
+		Status:             "active",
+	}
+
+	coupon := couponMessageDataFromOffer(offer)
+	if coupon.AvailableQuantity == nil || *coupon.AvailableQuantity != 4 {
+		t.Fatalf("expected available quantity from offer, got %#v", coupon.AvailableQuantity)
+	}
+	if coupon.Status != couponStatusActive {
+		t.Fatalf("expected active status, got %q", coupon.Status)
+	}
+	if coupon.OriginalPriceILS != nil {
+		t.Fatalf("did not expect original price without price anchor metadata, got %#v", coupon.OriginalPriceILS)
+	}
+}
+
+func TestCouponMessageDataFromOfferParsesPriceAnchorMetadata(t *testing.T) {
+	offer := store.Offer{
+		MerchantName:       "לקפריזה | רובע י\"ב",
+		Title:              "פיצה משפחתית + תוספת",
+		Description:        "74₪ → 59₪",
+		PriceAmount:        5900,
+		PaymentLink:        "https://paybox.example/lacapriza",
+		AvailableCodeCount: 8,
+		Status:             "active",
+	}
+
+	coupon := couponMessageDataFromOffer(offer)
+	if coupon.OriginalPriceILS == nil || *coupon.OriginalPriceILS != 7400 {
+		t.Fatalf("expected parsed original price, got %#v", coupon.OriginalPriceILS)
+	}
+	if coupon.OfferDescription != "" {
+		t.Fatalf("expected price-anchor metadata to stay out of offer description, got %q", coupon.OfferDescription)
+	}
+}
+
+func TestBotServiceSupportChatURLPrefersTelegramAdminID(t *testing.T) {
+	service := &BotService{adminUserIDs: []int64{8319213106}}
+
+	if got := service.supportChatURL("@admin"); got != "tg://user?id=8319213106" {
+		t.Fatalf("expected telegram direct chat url, got %q", got)
+	}
+}
+
+func TestBotServiceSupportChatURLFallsBackToUsername(t *testing.T) {
+	service := &BotService{}
+
+	if got := service.supportChatURL("@adminsupport"); got != "https://t.me/adminsupport" {
+		t.Fatalf("expected username support url, got %q", got)
+	}
+}
+
 func TestFilterBrowsableListingsDevelopmentAllowsDraftActiveAndPreviewDiscounts(t *testing.T) {
 	filtered := filterBrowsableListings([]store.Listing{
 		{ID: 1, Status: "draft", CouponValueAmount: 10000, SalePriceAmount: 6000, ResellPriceAmount: 6500},

@@ -135,7 +135,7 @@ func (s *BotService) handleMessage(ctx context.Context, message *tgbotapi.Messag
 	}
 
 	s.pendingClaims.delete(message.Chat.ID)
-	return s.sendMessage(ctx, message.Chat.ID, fmt.Sprintf("Payment screenshot received. Claim #%d is waiting for admin approval.", claim.ID))
+	return s.sendMessage(ctx, message.Chat.ID, fmt.Sprintf("Payment screenshot received. Claim #%d is waiting for admin approval.\n\nWe will send the QR code here as soon as the payment is approved.", claim.ID))
 }
 
 func (s *BotService) handleStart(ctx context.Context, message *tgbotapi.Message) error {
@@ -176,7 +176,7 @@ func (s *BotService) handleHelp(ctx context.Context, message *tgbotapi.Message) 
 
 <b>How to buy:</b>
 1. Type /start to see available coupons
-2. Press the coupon button on a deal
+2. Open a coupon and start the checkout
 3. Pay through the PayBox link
 4. Upload the payment screenshot here
 5. Wait for admin approval
@@ -729,55 +729,80 @@ func (s *BotService) sendFeaturedOffer(ctx context.Context, chatID int64, offers
 	}
 
 	offer := offers[index]
-	msg := tgbotapi.NewMessage(chatID, normalizeTelegramText(formatOfferSummary(&offer)))
-	msg.ParseMode = tgbotapi.ModeHTML
+	rendered := renderCouponTelegramMessage(couponMessageDataFromOffer(offer))
+	msg := tgbotapi.NewMessage(chatID, rendered.Text)
+	msg.ParseMode = rendered.ParseMode
 	msg.ReplyMarkup = offerKeyboard(offer.ID, offer.AvailableCodeCount, len(offers) > 1)
 	_, err := s.botAPI.Send(msg)
 	return err
 }
 
 func (s *BotService) sendOfferDetails(ctx context.Context, chatID int64, offer store.Offer) error {
-	msg := tgbotapi.NewMessage(chatID, normalizeTelegramText(formatOfferDetails(&offer)))
-	msg.ParseMode = tgbotapi.ModeHTML
+	rendered := renderCouponTelegramMessage(couponMessageDataFromOffer(offer))
+	text := rendered.Text
+	if strings.TrimSpace(offer.MerchantDisclosureText) != "" {
+		text += "\n\n" + html.EscapeString(offer.MerchantDisclosureText)
+	}
+	if strings.TrimSpace(offer.SupportContact) != "" {
+		text += "\n\n<b>Support:</b> " + html.EscapeString(offer.SupportContact)
+	}
+	msg := tgbotapi.NewMessage(chatID, normalizeTelegramText(text))
+	msg.ParseMode = rendered.ParseMode
 	msg.ReplyMarkup = offerDetailKeyboard(offer.ID, offer.AvailableCodeCount)
 	_, err := s.botAPI.Send(msg)
 	return err
 }
 
 func (s *BotService) sendPayBoxPaymentInstructions(ctx context.Context, chatID int64, started services.PayBoxPaymentStart) error {
-	text := fmt.Sprintf(`<b>PayBox payment ready</b>
+	text := fmt.Sprintf(`<b>תשלום PayBox מוכן</b>
 
-<b>Order:</b> %s
-<b>Coupon:</b> %s - %s
-<b>Amount:</b> %s
+<b>מספר הזמנה:</b> %s
+<b>קופון:</b> %s - %s
+<b>סכום:</b> %s
 
-Pay with the button below. After payment, upload the PayBox screenshot in this chat.`,
+1. לחצו על כפתור הרכישה בפייבוקס.
+2. חזרו לכאן והעלו צילום מסך של התשלום.
+3. אחרי האישור נשלח לכם את קוד ה-QR כאן בצ'אט.`,
 		html.EscapeString(started.OrderNumber),
 		html.EscapeString(started.MerchantName),
 		html.EscapeString(started.OfferTitle),
-		formatPrice(started.PriceAmount),
+		formatCouponPriceILS(started.PriceAmount),
 	)
 
 	if strings.TrimSpace(started.MerchantDisclosureText) != "" {
 		text += "\n\n" + html.EscapeString(started.MerchantDisclosureText)
 	}
-	if strings.TrimSpace(started.NextStepMessage) != "" {
-		text += "\n\n" + html.EscapeString(started.NextStepMessage)
-	}
 
 	msg := tgbotapi.NewMessage(chatID, normalizeTelegramText(text))
 	msg.ParseMode = tgbotapi.ModeHTML
-	msg.ReplyMarkup = tgbotapi.NewInlineKeyboardMarkup(
+	rows := [][]tgbotapi.InlineKeyboardButton{
 		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonURL("Pay in PayBox", started.PaymentLink),
+			tgbotapi.NewInlineKeyboardButtonURL(couponMessagingConfig.DefaultCTALabel, started.PaymentLink),
 		),
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("Another deal", formatCallbackData(CallbackAnotherOffer, started.OfferID)),
-		),
-	)
+	}
+	if supportURL := s.supportChatURL(started.SupportContact); supportURL != "" {
+		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonURL("דברו עם התמיכה", supportURL),
+		))
+	}
+	rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+		tgbotapi.NewInlineKeyboardButtonData("\u05e2\u05d5\u05d3 \u05d4\u05d8\u05d1\u05d4", formatCallbackData(CallbackAnotherOffer, started.OfferID)),
+	))
+	msg.ReplyMarkup = &tgbotapi.InlineKeyboardMarkup{InlineKeyboard: rows}
 
 	_, err := s.botAPI.Send(msg)
 	return err
+}
+
+func (s *BotService) supportChatURL(supportContact string) string {
+	if s != nil && len(s.adminUserIDs) > 0 && s.adminUserIDs[0] > 0 {
+		return fmt.Sprintf("tg://user?id=%d", s.adminUserIDs[0])
+	}
+	supportContact = strings.TrimSpace(supportContact)
+	if strings.HasPrefix(supportContact, "@") && len(supportContact) > 1 {
+		return "https://t.me/" + strings.TrimPrefix(supportContact, "@")
+	}
+	return ""
 }
 
 func (s *BotService) sendFeaturedListing(ctx context.Context, chatID int64, listings []store.Listing, index int) error {
@@ -868,55 +893,23 @@ func (s *BotService) formatFeaturedListingCaption(listing *store.Listing) string
 	)
 }
 
-func formatOfferSummary(offer *store.Offer) string {
-	available := fmt.Sprintf("%d coupons", offer.AvailableCodeCount)
-	if offer.AvailableCodeCount == 1 {
-		available = "1 coupon"
-	}
-
-	return fmt.Sprintf("<b>%s</b>\n%s\n\n<b>Price:</b> %s\n<b>Available:</b> %s",
-		html.EscapeString(offer.MerchantName),
-		html.EscapeString(truncate(firstNonEmpty(offer.Title, offer.Description), 80)),
-		formatPrice(offer.PriceAmount),
-		html.EscapeString(available),
-	)
-}
-
-func formatOfferDetails(offer *store.Offer) string {
-	lines := []string{
-		fmt.Sprintf("<b>%s</b>", html.EscapeString(offer.MerchantName)),
-		html.EscapeString(offer.Title),
-		fmt.Sprintf("<b>Price:</b> %s", formatPrice(offer.PriceAmount)),
-	}
-	if strings.TrimSpace(offer.Description) != "" {
-		lines = append(lines, html.EscapeString(offer.Description))
-	}
-	if strings.TrimSpace(offer.RedemptionTerms) != "" {
-		lines = append(lines, "<b>Redemption:</b> "+html.EscapeString(offer.RedemptionTerms))
-	}
-	if strings.TrimSpace(offer.MerchantDisclosureText) != "" {
-		lines = append(lines, html.EscapeString(offer.MerchantDisclosureText))
-	}
-	return strings.Join(lines, "\n")
-}
-
 func offerKeyboard(offerID int64, availableCodeCount int64, allowAnotherDeal bool) *tgbotapi.InlineKeyboardMarkup {
 	rows := make([][]tgbotapi.InlineKeyboardButton, 0, 2)
 	firstRow := make([]tgbotapi.InlineKeyboardButton, 0, 2)
 
 	if availableCodeCount > 0 {
-		firstRow = append(firstRow, tgbotapi.NewInlineKeyboardButtonData("Buy", formatCallbackData(CallbackBuyOffer, offerID)))
+		firstRow = append(firstRow, tgbotapi.NewInlineKeyboardButtonData("\U0001F6D2 \u05e7\u05e0\u05d4 \u05e2\u05db\u05e9\u05d9\u05d5", formatCallbackData(CallbackBuyOffer, offerID)))
 	}
 	if allowAnotherDeal {
-		firstRow = append(firstRow, tgbotapi.NewInlineKeyboardButtonData("Another deal", formatCallbackData(CallbackAnotherOffer, offerID)))
+		firstRow = append(firstRow, tgbotapi.NewInlineKeyboardButtonData("\u05e2\u05d5\u05d3 \u05d4\u05d8\u05d1\u05d4", formatCallbackData(CallbackAnotherOffer, offerID)))
 	}
 	if len(firstRow) == 0 {
-		firstRow = append(firstRow, tgbotapi.NewInlineKeyboardButtonData("Details", formatCallbackData(CallbackViewOffer, offerID)))
+		firstRow = append(firstRow, tgbotapi.NewInlineKeyboardButtonData("\u05e4\u05e8\u05d8\u05d9\u05dd", formatCallbackData(CallbackViewOffer, offerID)))
 	}
 
 	rows = append(rows, firstRow)
 	rows = append(rows, tgbotapi.NewInlineKeyboardRow(
-		tgbotapi.NewInlineKeyboardButtonData("Details", formatCallbackData(CallbackViewOffer, offerID)),
+		tgbotapi.NewInlineKeyboardButtonData("\u05e4\u05e8\u05d8\u05d9\u05dd", formatCallbackData(CallbackViewOffer, offerID)),
 	))
 	return &tgbotapi.InlineKeyboardMarkup{InlineKeyboard: rows}
 }
@@ -924,9 +917,9 @@ func offerKeyboard(offerID int64, availableCodeCount int64, allowAnotherDeal boo
 func offerDetailKeyboard(offerID int64, availableCodeCount int64) *tgbotapi.InlineKeyboardMarkup {
 	row := make([]tgbotapi.InlineKeyboardButton, 0, 2)
 	if availableCodeCount > 0 {
-		row = append(row, tgbotapi.NewInlineKeyboardButtonData("Buy", formatCallbackData(CallbackBuyOffer, offerID)))
+		row = append(row, tgbotapi.NewInlineKeyboardButtonData("\U0001F6D2 \u05e7\u05e0\u05d4 \u05e2\u05db\u05e9\u05d9\u05d5", formatCallbackData(CallbackBuyOffer, offerID)))
 	}
-	row = append(row, tgbotapi.NewInlineKeyboardButtonData("Another deal", formatCallbackData(CallbackAnotherOffer, offerID)))
+	row = append(row, tgbotapi.NewInlineKeyboardButtonData("\u05e2\u05d5\u05d3 \u05d4\u05d8\u05d1\u05d4", formatCallbackData(CallbackAnotherOffer, offerID)))
 	return &tgbotapi.InlineKeyboardMarkup{InlineKeyboard: [][]tgbotapi.InlineKeyboardButton{row}}
 }
 
