@@ -36,12 +36,17 @@ The MVP payment flow is manual PayBox approval:
 - `/start` shows the active offer catalog.
 - Buyer taps Buy and receives the merchant PayBox payment link.
 - Buyer uploads the PayBox payment screenshot in the Telegram chat.
-- Telegram admins listed in `TELEGRAM_ADMIN_USER_IDS` receive approve/reject buttons in Telegram.
+- The internal review chat set by `TELEGRAM_ADMIN_REVIEW_CHAT_ID` receives the screenshot with approve/reject buttons. If unset, the bot falls back to admin direct messages.
+- Only Telegram users listed in `TELEGRAM_ADMIN_USER_IDS` may approve or reject.
 - The web admin panel exposes `/admin/audit` for audit logs, with `/admin/payments` kept as a fallback claim queue.
-- Approval assigns a predefined code, sends a QR code to the buyer, and records delivery.
-- Merchant scans the QR code, which calls `/api/redemptions/scan/{token}` and records redemption in the database.
+- Approval assigns a predefined code, creates a redemption token, sends a QR code to the buyer, and records delivery.
+- Merchant scans the QR code, which calls `/api/redemptions/scan/{token}`, records redemption, shows a Hebrew merchant result page, and notifies the admin review chat.
+- On first redemption, the API can send the merchant a confirmation email through SMTP when configured.
 
 Set `TELEGRAM_ADMIN_USER_IDS` to a comma-separated list of Telegram user IDs, for example `TELEGRAM_ADMIN_USER_IDS=123456,987654`.
+Set `TELEGRAM_ADMIN_REVIEW_CHAT_ID` to a signed Telegram chat id for the internal review chat.
+
+The full implemented flow is documented in [docs/actual-flow.md](../../docs/actual-flow.md).
 
 ## Supabase Notes
 
@@ -81,44 +86,6 @@ Notes:
 - `down` reverts only the most recently applied local migration using the matching `.down.sql` file.
 - This is safe to use against Supabase with the current pooled connection string because the runner uses normal PostgreSQL transactions and table locks, not session-level migration locks.
 
-## Catalog Import
-
-To import external catalog listings from a HAR export and download their primary product photos into `data/photos`, run:
-
-```powershell
-go run ./apps/api/cmd/import_catalog -input data/GetCategoryById_6982.txt -photos-dir data/photos
-```
-
-If you want the importer to compute a resale price from the source cost while covering payment fees, pass the fee inputs:
-
-```powershell
-go run ./apps/api/cmd/import_catalog `
-  -input data/GetCategoryById_6982.txt `
-  -photos-dir data/photos `
-  -payment-fee-rate 0.0349 `
-  -payment-fixed-fee 0.49
-```
-
-You can also set these in `.env` so the importer uses them by default:
-
-- `PAYMENT_FEE_PERCENT_RATE=0.0349`
-- `PAYMENT_FIXED_FEE_AMOUNT=0.49`
-
-The importer uses this formula:
-
-- `profit = (coupon_value_amount - sale_price_amount) / 2`
-- `sale_price_amount - source_cost_amount - payment_fee = profit`
-
-That resolves to:
-
-- `sale_price_amount = (coupon_value_amount + 2*source_cost_amount + 2*payment_fixed_fee) / (3 - 2*payment_fee_rate)`
-
-The importer stores the original HAR supplier price in `sale_price_amount` and the computed customer-facing price in `resell_price_amount`.
-
-If the computed sale price is greater than or equal to `coupon_value_amount`, the importer skips that listing and removes any matching previously imported listing from sale.
-
-Use `-dry-run` to validate the HAR and see how many sources/listings would be imported without touching the database or downloading files.
-
 ## Optional Database Settings
 
 In addition to `DATABASE_URL`, the app supports these portable `pgxpool` settings:
@@ -134,16 +101,6 @@ In addition to `DATABASE_URL`, the app supports these portable `pgxpool` setting
 
 `DATABASE_QUERY_EXEC_MODE` accepts `cache_statement`, `cache_describe`, `describe_exec`, `exec`, or `simple_protocol`.
 
-## Ops Hardening
+## Admin And Audit
 
-The API now runs a small in-process ops loop for launch readiness:
-
-- `OPS_SWEEP_INTERVAL` controls how often the service sweeps expired coupons and listing statuses.
-- `OPS_DELIVERY_ALERT_AFTER` controls when paid-but-undelivered orders are escalated into support cases.
-- `OPS_BATCH_SIZE` controls how many orders each ops cycle inspects per category.
-
-Admin operations now keep audit rows for source changes, listing changes, coupon inventory changes, and support outcomes. The dashboard also highlights:
-
-- paid-but-undelivered orders
-- pending payment reconciliations
-- recent admin actions
+Admin operations keep audit rows for payment claim approval/rejection, support cases, inventory changes, and sensitive internal actions. The embedded admin pages remain available for operational fallback, while the primary review loop is the Telegram admin review chat.

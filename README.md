@@ -1,33 +1,23 @@
-# Bazario Coupon Bot
+# KuponFast Coupon Bot
 
 Agent-driven repo scaffold for a Telegram-based coupon commerce MVP.
 
 ## Goals
 - Fast MVP delivery
-- Clear product and architecture ownership
+- Clear current-flow documentation
 - Low-complexity go-to-market validation
-- Reusable Codex agent setup
 
-## Product Direction
-The current target product is a Telegram-first coupon sales flow for small businesses in Israel:
+## Current Product
+The current product is a Telegram-first coupon sales flow for small businesses in Israel:
+
 - fixed merchant-partner offers
 - PayBox payment links
-- manual payment verification
-- predefined code delivery in Telegram
+- manual payment screenshot approval by an internal Telegram admin chat
+- QR delivery to the buyer after approval
+- merchant QR scan redemption
+- optional merchant email confirmation after first successful redemption
 
-This repo still contains legacy automated payment and resale-oriented implementation work. The target architecture docs now describe the manual PayBox v1 operating model that should guide future refactors.
-
-## Core roles
-- `prd` agent: defines roadmap and requirements
-- `architect` agent: designs the system and implementation shape
-- `orchestrator` agent: coordinates both, resolves conflicts, and converts strategy into execution
-
-## First steps
-1. Read `PROJECT_CONTEXT.md`
-2. Review `.codex/agents/`
-3. Start with `docs/prd/mvp_prd.md`
-4. Review `docs/architecture/`
-5. Implement inside `apps/`
+The source of truth for the implemented flow is [docs/actual-flow.md](docs/actual-flow.md).
 
 ## Database Approach
 
@@ -39,11 +29,9 @@ The MVP starts on Supabase PostgreSQL for managed hosting, but the backend stays
 
 ## Payments
 
-The target v1 flow uses merchant-approved PayBox payment links with manual buyer claim submission and manual admin verification before coupon delivery.
+The current flow uses merchant-approved PayBox links. Buyers upload a payment screenshot in Telegram, admins approve or reject from Telegram, and approved buyers receive a QR code.
 
-Some runtime code still reflects an older PayPal/webhook design. Treat the architecture docs as the source of truth for the next refactor phase.
-
-See [apps/api/README.md](/abs/path/c:/Projects/couponsTelBot/apps/api/README.md) for backend setup details.
+See [apps/api/README.md](apps/api/README.md) for backend setup details.
 
 ## Go Commands
 
