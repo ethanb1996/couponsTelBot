@@ -28,9 +28,15 @@ type Config struct {
 	TelegramBotToken          string
 	TelegramWebhookSecret     string
 	TelegramAdminUserIDs      []int64
+	TelegramAdminReviewChatID int64
 	AdminBasicAuthUser        string
 	AdminBasicAuthPass        string
 	CouponEncryptionKey       string
+	SMTPHost                  string
+	SMTPPort                  int
+	SMTPUsername              string
+	SMTPPassword              string
+	SMTPFrom                  string
 	OpsSweepInterval          time.Duration
 	OpsDeliveryAlertAfter     time.Duration
 	OpsReconcileAfter         time.Duration
@@ -97,8 +103,16 @@ func Load() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	smtpPort, err := intEnvWithDefault("SMTP_PORT", 587)
+	if err != nil {
+		return Config{}, err
+	}
 
 	telegramAdminUserIDs, err := int64ListEnv("TELEGRAM_ADMIN_USER_IDS")
+	if err != nil {
+		return Config{}, err
+	}
+	telegramAdminReviewChatID, err := optionalNonZeroInt64Env("TELEGRAM_ADMIN_REVIEW_CHAT_ID")
 	if err != nil {
 		return Config{}, err
 	}
@@ -119,9 +133,15 @@ func Load() (Config, error) {
 		TelegramBotToken:          strings.TrimSpace(os.Getenv("TELEGRAM_BOT_TOKEN")),
 		TelegramWebhookSecret:     strings.TrimSpace(os.Getenv("TELEGRAM_WEBHOOK_SECRET")),
 		TelegramAdminUserIDs:      telegramAdminUserIDs,
+		TelegramAdminReviewChatID: telegramAdminReviewChatID,
 		AdminBasicAuthUser:        strings.TrimSpace(os.Getenv("ADMIN_BASIC_AUTH_USER")),
 		AdminBasicAuthPass:        strings.TrimSpace(os.Getenv("ADMIN_BASIC_AUTH_PASS")),
 		CouponEncryptionKey:       strings.TrimSpace(os.Getenv("COUPON_ENCRYPTION_KEY")),
+		SMTPHost:                  strings.TrimSpace(os.Getenv("SMTP_HOST")),
+		SMTPPort:                  smtpPort,
+		SMTPUsername:              strings.TrimSpace(os.Getenv("SMTP_USERNAME")),
+		SMTPPassword:              strings.TrimSpace(os.Getenv("SMTP_PASSWORD")),
+		SMTPFrom:                  strings.TrimSpace(os.Getenv("SMTP_FROM")),
 		OpsSweepInterval:          opsSweepInterval,
 		OpsDeliveryAlertAfter:     opsDeliveryAlertAfter,
 		OpsReconcileAfter:         opsReconcileAfter,
@@ -286,6 +306,20 @@ func int64ListEnv(key string) ([]int64, error) {
 	return values, nil
 }
 
+func optionalNonZeroInt64Env(key string) (int64, error) {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return 0, nil
+	}
+
+	parsed, err := strconv.ParseInt(value, 10, 64)
+	if err != nil || parsed == 0 {
+		return 0, fmt.Errorf("%s must be a non-zero integer", key)
+	}
+
+	return parsed, nil
+}
+
 func durationEnvWithDefault(key string, fallback time.Duration) (time.Duration, error) {
 	value := strings.TrimSpace(os.Getenv(key))
 	if value == "" {
@@ -357,6 +391,13 @@ func validateDatabaseConfig(cfg Config) error {
 
 	if cfg.OpsBatchSize <= 0 {
 		return fmt.Errorf("OPS_BATCH_SIZE must be greater than zero")
+	}
+
+	if cfg.SMTPPort <= 0 {
+		return fmt.Errorf("SMTP_PORT must be greater than zero")
+	}
+	if cfg.SMTPHost != "" && cfg.SMTPFrom == "" {
+		return fmt.Errorf("SMTP_FROM is required when SMTP_HOST is set")
 	}
 
 	switch cfg.DatabaseQueryExecMode {

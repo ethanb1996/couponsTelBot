@@ -441,10 +441,14 @@ func (p *Postgres) SubmitManualPaymentClaim(ctx context.Context, params SubmitMa
 		return ManualPaymentClaim{}, err
 	}
 	if existing != nil {
+		summary, err := loadManualPaymentClaimSummary(ctx, tx, existing.ID)
+		if err != nil {
+			return ManualPaymentClaim{}, err
+		}
 		if err := tx.Commit(ctx); err != nil {
 			return ManualPaymentClaim{}, err
 		}
-		return *existing, nil
+		return summary, nil
 	}
 
 	if order.Status != mvpOrderStatusAwaitingPayment {
@@ -505,6 +509,11 @@ func (p *Postgres) SubmitManualPaymentClaim(ctx context.Context, params SubmitMa
 			updated_at = NOW()
 		WHERE id = $1
 	`, params.OrderID)
+	if err != nil {
+		return ManualPaymentClaim{}, err
+	}
+
+	claim, err = loadManualPaymentClaimSummary(ctx, tx, claim.ID)
 	if err != nil {
 		return ManualPaymentClaim{}, err
 	}
@@ -691,18 +700,20 @@ func (p *Postgres) RejectManualPaymentClaim(ctx context.Context, params ReviewMa
 		return ManualPaymentClaim{}, MVPOrder{}, mapStoreErr(err)
 	}
 
-	row = tx.QueryRow(ctx, mvpOrderSelectSQL(`
-		FROM (
-			UPDATE orders
-			SET
-				status = 'payment_rejected',
-				failure_reason = $2,
-				updated_at = NOW()
-			WHERE id = $1
-			RETURNING *
-		) ord
+	query := `WITH updated_order AS (
+		UPDATE orders
+		SET
+			status = 'payment_rejected',
+			failure_reason = $2,
+			updated_at = NOW()
+		WHERE id = $1
+		RETURNING *
+	)
+	` + mvpOrderSelectSQL(`
+		FROM updated_order ord
 		INNER JOIN offers o ON o.id = ord.offer_id
-	`), order.ID, defaultString(params.ReviewNote, "payment_not_matched"))
+	`)
+	row = tx.QueryRow(ctx, query, order.ID, defaultString(params.ReviewNote, "payment_not_matched"))
 	order, err = scanMVPOrder(row)
 	if err != nil {
 		return ManualPaymentClaim{}, MVPOrder{}, mapStoreErr(err)
@@ -808,6 +819,18 @@ func loadManualPaymentClaimForUpdate(ctx context.Context, tx pgx.Tx, claimID int
 	return claim, nil
 }
 
+func loadManualPaymentClaimSummary(ctx context.Context, tx pgx.Tx, claimID int64) (ManualPaymentClaim, error) {
+	row := tx.QueryRow(ctx, manualPaymentClaimSummarySQL(`
+		WHERE mpc.id = $1
+	`), claimID)
+
+	claim, err := scanManualPaymentClaimSummary(row)
+	if err != nil {
+		return ManualPaymentClaim{}, mapStoreErr(err)
+	}
+	return claim, nil
+}
+
 func assignAvailablePredefinedCode(ctx context.Context, tx pgx.Tx, offerID int64) (PredefinedCode, error) {
 	var codeID int64
 	err := tx.QueryRow(ctx, `
@@ -859,20 +882,22 @@ func markManualClaimApprovedWithCode(ctx context.Context, tx pgx.Tx, claimID, or
 		return ManualPaymentClaim{}, MVPOrder{}, err
 	}
 
-	row := tx.QueryRow(ctx, mvpOrderSelectSQL(`
-		FROM (
-			UPDATE orders
-			SET
-				status = 'payment_verified',
-				predefined_code_id = $2,
-				verified_at = NOW(),
-				failure_reason = '',
-				updated_at = NOW()
-			WHERE id = $1
-			RETURNING *
-		) ord
+	query := `WITH updated_order AS (
+		UPDATE orders
+		SET
+			status = 'payment_verified',
+			predefined_code_id = $2,
+			verified_at = NOW(),
+			failure_reason = '',
+			updated_at = NOW()
+		WHERE id = $1
+		RETURNING *
+	)
+	` + mvpOrderSelectSQL(`
+		FROM updated_order ord
 		INNER JOIN offers o ON o.id = ord.offer_id
-	`), orderID, codeID)
+	`)
+	row := tx.QueryRow(ctx, query, orderID, codeID)
 	order, err := scanMVPOrder(row)
 	if err != nil {
 		return ManualPaymentClaim{}, MVPOrder{}, mapStoreErr(err)
@@ -887,19 +912,21 @@ func markManualClaimApprovedWithoutCode(ctx context.Context, tx pgx.Tx, claimID,
 		return ManualPaymentClaim{}, MVPOrder{}, err
 	}
 
-	row := tx.QueryRow(ctx, mvpOrderSelectSQL(`
-		FROM (
-			UPDATE orders
-			SET
-				status = 'support_required',
-				verified_at = NOW(),
-				failure_reason = 'no_available_predefined_code',
-				updated_at = NOW()
-			WHERE id = $1
-			RETURNING *
-		) ord
+	query := `WITH updated_order AS (
+		UPDATE orders
+		SET
+			status = 'support_required',
+			verified_at = NOW(),
+			failure_reason = 'no_available_predefined_code',
+			updated_at = NOW()
+		WHERE id = $1
+		RETURNING *
+	)
+	` + mvpOrderSelectSQL(`
+		FROM updated_order ord
 		INNER JOIN offers o ON o.id = ord.offer_id
-	`), orderID)
+	`)
+	row := tx.QueryRow(ctx, query, orderID)
 	order, err := scanMVPOrder(row)
 	if err != nil {
 		return ManualPaymentClaim{}, MVPOrder{}, mapStoreErr(err)

@@ -131,6 +131,11 @@ func TestLoadAppliesExplicitDatabaseSettings(t *testing.T) {
 	t.Setenv("OPS_RECONCILE_AFTER", "3m")
 	t.Setenv("OPS_CHECKOUT_HOLD_DURATION", "11m")
 	t.Setenv("OPS_BATCH_SIZE", "15")
+	t.Setenv("SMTP_HOST", "smtp.example.com")
+	t.Setenv("SMTP_PORT", "2525")
+	t.Setenv("SMTP_USERNAME", "mailer")
+	t.Setenv("SMTP_PASSWORD", "secret")
+	t.Setenv("SMTP_FROM", "noreply@example.com")
 	t.Setenv("TELEGRAM_BOT_TOKEN", "bot-token")
 	t.Setenv("TELEGRAM_WEBHOOK_SECRET", "telegram-secret")
 	t.Setenv("TELEGRAM_ADMIN_USER_IDS", "111, 222")
@@ -195,8 +200,39 @@ func TestLoadAppliesExplicitDatabaseSettings(t *testing.T) {
 		t.Fatalf("expected explicit OPS_BATCH_SIZE, got %d", cfg.OpsBatchSize)
 	}
 
+	if cfg.SMTPHost != "smtp.example.com" || cfg.SMTPPort != 2525 || cfg.SMTPUsername != "mailer" || cfg.SMTPPassword != "secret" || cfg.SMTPFrom != "noreply@example.com" {
+		t.Fatalf("unexpected smtp config: %#v", cfg)
+	}
+
 	if len(cfg.TelegramAdminUserIDs) != 2 || cfg.TelegramAdminUserIDs[0] != 111 || cfg.TelegramAdminUserIDs[1] != 222 {
 		t.Fatalf("expected parsed TELEGRAM_ADMIN_USER_IDS, got %#v", cfg.TelegramAdminUserIDs)
+	}
+}
+
+func TestLoadParsesTelegramAdminReviewChatID(t *testing.T) {
+	t.Setenv("DATABASE_URL", "postgres://example")
+	t.Setenv("TELEGRAM_BOT_TOKEN", "bot-token")
+	t.Setenv("TELEGRAM_WEBHOOK_SECRET", "telegram-secret")
+	t.Setenv("TELEGRAM_ADMIN_REVIEW_CHAT_ID", "-1001234567890")
+	t.Setenv("ADMIN_BASIC_AUTH_USER", "admin")
+	t.Setenv("ADMIN_BASIC_AUTH_PASS", "password")
+	t.Setenv("COUPON_ENCRYPTION_KEY", strings.Repeat("a", 32))
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("expected config load to succeed: %v", err)
+	}
+	if cfg.TelegramAdminReviewChatID != -1001234567890 {
+		t.Fatalf("expected review chat id, got %d", cfg.TelegramAdminReviewChatID)
+	}
+
+	t.Setenv("TELEGRAM_ADMIN_REVIEW_CHAT_ID", "12345")
+	cfg, err = Load()
+	if err != nil {
+		t.Fatalf("expected positive review chat id to load: %v", err)
+	}
+	if cfg.TelegramAdminReviewChatID != 12345 {
+		t.Fatalf("expected positive review chat id, got %d", cfg.TelegramAdminReviewChatID)
 	}
 }
 
@@ -234,6 +270,69 @@ func TestLoadRejectsInvalidTelegramAdminUserIDs(t *testing.T) {
 	}
 
 	if got := err.Error(); got != "TELEGRAM_ADMIN_USER_IDS must contain comma-separated positive integers" {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestLoadRejectsInvalidTelegramAdminReviewChatID(t *testing.T) {
+	t.Setenv("DATABASE_URL", "postgres://example")
+	t.Setenv("TELEGRAM_BOT_TOKEN", "bot-token")
+	t.Setenv("TELEGRAM_WEBHOOK_SECRET", "telegram-secret")
+	t.Setenv("TELEGRAM_ADMIN_REVIEW_CHAT_ID", "nope")
+	t.Setenv("ADMIN_BASIC_AUTH_USER", "admin")
+	t.Setenv("ADMIN_BASIC_AUTH_PASS", "password")
+	t.Setenv("COUPON_ENCRYPTION_KEY", strings.Repeat("a", 32))
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("expected config load to fail")
+	}
+	if got := err.Error(); got != "TELEGRAM_ADMIN_REVIEW_CHAT_ID must be a non-zero integer" {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	t.Setenv("TELEGRAM_ADMIN_REVIEW_CHAT_ID", "0")
+	_, err = Load()
+	if err == nil {
+		t.Fatal("expected zero review chat id to fail")
+	}
+	if got := err.Error(); got != "TELEGRAM_ADMIN_REVIEW_CHAT_ID must be a non-zero integer" {
+		t.Fatalf("unexpected zero error: %v", err)
+	}
+}
+
+func TestLoadRejectsIncompleteSMTPSettings(t *testing.T) {
+	t.Setenv("DATABASE_URL", "postgres://example")
+	t.Setenv("TELEGRAM_BOT_TOKEN", "bot-token")
+	t.Setenv("TELEGRAM_WEBHOOK_SECRET", "telegram-secret")
+	t.Setenv("ADMIN_BASIC_AUTH_USER", "admin")
+	t.Setenv("ADMIN_BASIC_AUTH_PASS", "password")
+	t.Setenv("COUPON_ENCRYPTION_KEY", strings.Repeat("a", 32))
+	t.Setenv("SMTP_HOST", "smtp.example.com")
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("expected config load to fail")
+	}
+	if got := err.Error(); got != "SMTP_FROM is required when SMTP_HOST is set" {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestLoadRejectsInvalidSMTPPort(t *testing.T) {
+	t.Setenv("DATABASE_URL", "postgres://example")
+	t.Setenv("TELEGRAM_BOT_TOKEN", "bot-token")
+	t.Setenv("TELEGRAM_WEBHOOK_SECRET", "telegram-secret")
+	t.Setenv("ADMIN_BASIC_AUTH_USER", "admin")
+	t.Setenv("ADMIN_BASIC_AUTH_PASS", "password")
+	t.Setenv("COUPON_ENCRYPTION_KEY", strings.Repeat("a", 32))
+	t.Setenv("SMTP_PORT", "0")
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("expected config load to fail")
+	}
+	if got := err.Error(); got != "SMTP_PORT must be greater than zero" {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }

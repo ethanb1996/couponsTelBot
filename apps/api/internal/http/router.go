@@ -56,6 +56,18 @@ func NewRouter(deps Dependencies) (Router, error) {
 	}
 	botService.SetPayBoxFlow(payBoxService)
 
+	emailNotifier, err := services.NewSMTPRedemptionNotifier(services.SMTPRedemptionNotifierOptions{
+		Host:     deps.Config.SMTPHost,
+		Port:     deps.Config.SMTPPort,
+		Username: deps.Config.SMTPUsername,
+		Password: deps.Config.SMTPPassword,
+		From:     deps.Config.SMTPFrom,
+	})
+	if err != nil {
+		return Router{}, err
+	}
+	redemptionNotifier := redemptionNotifierChain{botService, emailNotifier}
+
 	adminHandler, err := admin.NewHandler(deps.Logger, deps.Store, deps.Config.CouponEncryptionKey, payBoxService)
 	if err != nil {
 		return Router{}, err
@@ -70,8 +82,8 @@ func NewRouter(deps Dependencies) (Router, error) {
 		http.Redirect(w, r, "/admin/", http.StatusSeeOther)
 	})
 	mux.HandleFunc("/webhooks/telegram", telegramHandler.ServeHTTP)
-	mux.HandleFunc("/api/redemptions/scan", redemptionScanHandler(deps.Store))
-	mux.HandleFunc("/api/redemptions/scan/", redemptionScanByTokenHandler(deps.Store))
+	mux.HandleFunc("/api/redemptions/scan", redemptionScanHandler(deps.Store, redemptionNotifier))
+	mux.HandleFunc("/api/redemptions/scan/", redemptionScanByTokenHandler(deps.Store, redemptionNotifier))
 
 	return Router{
 		Handler: Chain(

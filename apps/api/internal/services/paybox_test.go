@@ -137,6 +137,9 @@ func TestPayBoxServiceApproveClaimDeliversCodeAndNotifiesAdmin(t *testing.T) {
 	if len(messenger.photos) != 1 || !strings.Contains(messenger.photos[0].caption, "Show this QR code") {
 		t.Fatalf("expected qr delivery message, got %+v", messenger.photos)
 	}
+	if messenger.photos[0].telegramUserID != 1111 {
+		t.Fatalf("expected qr delivery to buyer telegram id 1111, got %+v", messenger.photos[0])
+	}
 	if payboxStore.recordedDelivery.Status != "confirmed" || payboxStore.recordedDelivery.PredefinedCodeID != codeID {
 		t.Fatalf("unexpected recorded delivery params: %+v", payboxStore.recordedDelivery)
 	}
@@ -145,6 +148,47 @@ func TestPayBoxServiceApproveClaimDeliversCodeAndNotifiesAdmin(t *testing.T) {
 	}
 	if len(payboxStore.recordedActions) != 1 || payboxStore.recordedActions[0].ActionType != "approve_payment_claim" {
 		t.Fatalf("expected approval audit action, got %+v", payboxStore.recordedActions)
+	}
+}
+
+func TestPayBoxServiceApproveAlreadySentClaimDoesNotRedeliver(t *testing.T) {
+	t.Parallel()
+
+	codeID := int64(7001)
+	payboxStore := &stubPayBoxStore{
+		user: store.User{ID: 11, TelegramUserID: 1111},
+		approval: store.ApproveManualPaymentClaimResult{
+			Order: store.MVPOrder{
+				ID:               501,
+				UserID:           11,
+				OrderNumber:      "PB-501",
+				Status:           "coupon_sent",
+				PredefinedCodeID: &codeID,
+			},
+			Claim: store.ManualPaymentClaim{ID: 901, OrderID: 501},
+			Code:  &store.PredefinedCode{ID: codeID, CodeEncrypted: []byte("cipher"), CodeMaskedDisplay: "***1234"},
+		},
+	}
+	messenger := &stubPayBoxMessenger{}
+	admin := &stubPayBoxAdminNotifier{}
+	service := newTestPayBoxService(t, payboxStore, messenger, admin, stubPayBoxCodeRenderer{code: "CODE-1234"}, fixedOrderNumberer{})
+
+	result, err := service.ApproveClaim(context.Background(), 901, "admin-1", "matched")
+	if err != nil {
+		t.Fatalf("expected already-sent approval to succeed, got %v", err)
+	}
+
+	if !result.AlreadyDelivered {
+		t.Fatal("expected already delivered result")
+	}
+	if len(messenger.photos) != 0 {
+		t.Fatalf("expected no repeated qr delivery, got %+v", messenger.photos)
+	}
+	if payboxStore.createdRedemption.OrderID != 0 || payboxStore.recordedDelivery.OrderID != 0 {
+		t.Fatalf("expected no redemption or delivery record, got redemption=%+v delivery=%+v", payboxStore.createdRedemption, payboxStore.recordedDelivery)
+	}
+	if len(admin.approvedResults) != 1 || !admin.approvedResults[0].AlreadyDelivered {
+		t.Fatalf("expected admin already-delivered notification, got %+v", admin.approvedResults)
 	}
 }
 
@@ -353,8 +397,9 @@ type stubPayBoxMessenger struct {
 }
 
 type stubPayBoxPhoto struct {
-	filename string
-	caption  string
+	telegramUserID int64
+	filename       string
+	caption        string
 }
 
 func (s *stubPayBoxMessenger) SendHTMLMessage(ctx context.Context, telegramUserID int64, text string) (int64, error) {
@@ -366,7 +411,7 @@ func (s *stubPayBoxMessenger) SendHTMLMessage(ctx context.Context, telegramUserI
 }
 
 func (s *stubPayBoxMessenger) SendPhotoMessage(ctx context.Context, telegramUserID int64, photo []byte, filename string, caption string) (int64, error) {
-	s.photos = append(s.photos, stubPayBoxPhoto{filename: filename, caption: caption})
+	s.photos = append(s.photos, stubPayBoxPhoto{telegramUserID: telegramUserID, filename: filename, caption: caption})
 	if s.err != nil {
 		return 0, s.err
 	}

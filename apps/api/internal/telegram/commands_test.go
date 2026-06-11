@@ -254,6 +254,105 @@ func TestBotServiceChecksTelegramAdminAllowlist(t *testing.T) {
 	}
 }
 
+func TestBotServiceUsesReviewChatForAdminNotifications(t *testing.T) {
+	service := &BotService{
+		adminUserIDs:      []int64{111, 222},
+		adminUserIDSet:    buildAdminUserIDSet([]int64{111, 222}),
+		adminReviewChatID: -1001234567890,
+	}
+
+	recipients := service.adminNotificationRecipients()
+	if len(recipients) != 1 || recipients[0] != -1001234567890 {
+		t.Fatalf("expected review chat recipient, got %#v", recipients)
+	}
+	if !service.isTelegramAdmin(&tgbotapi.User{ID: 111}) {
+		t.Fatal("expected configured admin user to be authorized")
+	}
+	if service.isTelegramAdmin(&tgbotapi.User{ID: 333}) {
+		t.Fatal("did not expect review-chat membership to grant admin rights")
+	}
+}
+
+func TestBotServiceFallsBackToAdminDMRecipients(t *testing.T) {
+	service := &BotService{adminUserIDs: []int64{111, 222}}
+
+	recipients := service.adminNotificationRecipients()
+	if len(recipients) != 2 || recipients[0] != 111 || recipients[1] != 222 {
+		t.Fatalf("expected admin DM recipients, got %#v", recipients)
+	}
+}
+
+func TestFormatAdminPaymentClaimMessageIncludesBuyerChatID(t *testing.T) {
+	message := formatAdminPaymentClaimMessage(store.ManualPaymentClaim{
+		ID:                       901,
+		OrderID:                  501,
+		OrderNumber:              "PB-501",
+		PayerUsername:            "telegram:1111",
+		ClaimedAmount:            4900,
+		PaymentScreenshotCaption: "paid",
+		BuyerDisplay:             "Buyer One",
+		BuyerTelegramID:          1111,
+		MerchantName:             "Cafe",
+		OfferTitle:               "Breakfast",
+	})
+
+	for _, want := range []string{
+		"Claim: #901",
+		"Order: PB-501 (#501)",
+		"Buyer Telegram chat ID: <code>1111</code>",
+		"Offer: Cafe - Breakfast",
+		"Caption: paid",
+	} {
+		if !strings.Contains(message, want) {
+			t.Fatalf("expected admin message to contain %q, got %q", want, message)
+		}
+	}
+}
+
+func TestFormatAdminCouponRedemptionMessage(t *testing.T) {
+	scannedAt := time.Date(2026, 6, 9, 18, 15, 0, 0, time.UTC)
+	message := formatAdminCouponRedemptionMessage(store.CouponRedemptionScanResult{
+		FirstScan:       true,
+		OrderNumber:     "PB-20260609180338",
+		MerchantName:    "הרובע י״ב",
+		OfferTitle:      "פיצה משפחתית + תוספת",
+		BuyerDisplay:    "Buyer One",
+		BuyerTelegramID: 1111,
+		Redemption: store.CouponRedemption{
+			Status:    "redeemed",
+			ScannedAt: &scannedAt,
+		},
+	})
+
+	for _, want := range []string{
+		"<b>קופון מומש בהצלחה</b>",
+		"Order: PB-20260609180338",
+		"Merchant: הרובע י״ב",
+		"Coupon: פיצה משפחתית + תוספת",
+		"Status: redeemed",
+		"Buyer Telegram ID: <code>1111</code>",
+	} {
+		if !strings.Contains(message, want) {
+			t.Fatalf("expected redemption message to contain %q, got %q", want, message)
+		}
+	}
+}
+
+func TestFormatAdminCouponRedemptionMessageForRepeatScan(t *testing.T) {
+	message := formatAdminCouponRedemptionMessage(store.CouponRedemptionScanResult{
+		FirstScan:   false,
+		OrderNumber: "PB-20260609180338",
+		Redemption:  store.CouponRedemption{Status: "redeemed"},
+	})
+
+	if !strings.Contains(message, "<b>נסיון סריקה חוזרת</b>") {
+		t.Fatalf("expected repeat-scan title, got %q", message)
+	}
+	if strings.Contains(message, "Buyer Telegram ID") {
+		t.Fatalf("did not expect missing buyer id line, got %q", message)
+	}
+}
+
 func TestRenderCouponTelegramMessageRendersDirectCoupon(t *testing.T) {
 	original := int64(7400)
 	total := int64(20)

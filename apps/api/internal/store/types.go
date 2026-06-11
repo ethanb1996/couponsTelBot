@@ -244,6 +244,18 @@ type CouponRedemption struct {
 	CreatedAt         time.Time
 	UpdatedAt         time.Time
 }
+
+type CouponRedemptionScanResult struct {
+	Redemption      CouponRedemption
+	FirstScan       bool
+	OrderNumber     string
+	MerchantName    string
+	MerchantContact string
+	OfferTitle      string
+	BuyerDisplay    string
+	BuyerTelegramID int64
+}
+
 type FulfillmentPreparation struct {
 	Order    Order
 	Coupon   *Coupon

@@ -33,15 +33,18 @@ const (
 	CallbackAdminRejectClaim  = "admin_reject_claim"
 )
 
+const payBoxScreenshotPromptDelay = 2 * time.Second
+
 type BotService struct {
-	logger         *slog.Logger
-	store          *store.Postgres
-	botAPI         *tgbotapi.BotAPI
-	config         *config.Config
-	payBox         PayBoxFlow
-	adminUserIDs   []int64
-	adminUserIDSet map[int64]struct{}
-	pendingClaims  *pendingPayBoxClaims
+	logger            *slog.Logger
+	store             *store.Postgres
+	botAPI            *tgbotapi.BotAPI
+	config            *config.Config
+	payBox            PayBoxFlow
+	adminUserIDs      []int64
+	adminUserIDSet    map[int64]struct{}
+	adminReviewChatID int64
+	pendingClaims     *pendingPayBoxClaims
 }
 
 type PayBoxFlow interface {
@@ -67,13 +70,14 @@ func NewBotService(logger *slog.Logger, repo *store.Postgres, botToken string, c
 		adminUserIDs = cfg.TelegramAdminUserIDs
 	}
 	service := &BotService{
-		logger:         logger,
-		store:          repo,
-		botAPI:         api,
-		config:         cfg,
-		adminUserIDs:   append([]int64(nil), adminUserIDs...),
-		adminUserIDSet: buildAdminUserIDSet(adminUserIDs),
-		pendingClaims:  newPendingPayBoxClaims(),
+		logger:            logger,
+		store:             repo,
+		botAPI:            api,
+		config:            cfg,
+		adminUserIDs:      append([]int64(nil), adminUserIDs...),
+		adminUserIDSet:    buildAdminUserIDSet(adminUserIDs),
+		adminReviewChatID: adminReviewChatIDFromConfig(cfg),
+		pendingClaims:     newPendingPayBoxClaims(),
 	}
 	return service, nil
 }
@@ -108,7 +112,7 @@ func (s *BotService) handleCommand(ctx context.Context, message *tgbotapi.Messag
 	case "help":
 		return s.handleHelp(ctx, message)
 	default:
-		return s.sendMessage(ctx, message.Chat.ID, "Unknown command. Type /help for available commands.")
+		return s.sendMessage(ctx, message.Chat.ID, "פקודה לא מוכרת. הקלד /help לצפייה בפקודות הזמינות.")
 	}
 }
 
@@ -124,25 +128,25 @@ func (s *BotService) handleMessage(ctx context.Context, message *tgbotapi.Messag
 
 	evidence, ok := paymentEvidenceFromMessage(message)
 	if !ok {
-		return s.sendMessage(ctx, message.Chat.ID, "Please upload the PayBox payment screenshot as a photo or image document.")
+		return s.sendMessage(ctx, message.Chat.ID, "אנא העלה צילום מסך של תשלום PayBox כקובץ תמונה או מסמך תמונה.")
 	}
 	evidence.PayerReference = fmt.Sprintf("telegram:%d", message.From.ID)
 
 	claim, err := s.payBox.SubmitPaymentClaim(ctx, pending.orderID, evidence, pending.claimedAmount)
 	if err != nil {
 		s.logger.Error("failed to submit paybox screenshot claim", "error", err, "order_id", pending.orderID)
-		return s.sendMessage(ctx, message.Chat.ID, "Could not submit the screenshot for review. Please try again.")
+		return s.sendMessage(ctx, message.Chat.ID, "לא ניתן לשלוח את צילום המסך לבדיקה. נסה שוב בבקשה.")
 	}
 
 	s.pendingClaims.delete(message.Chat.ID)
-	return s.sendMessage(ctx, message.Chat.ID, fmt.Sprintf("Payment screenshot received. Claim #%d is waiting for admin approval.\n\nWe will send the QR code here as soon as the payment is approved.", claim.ID))
+	return s.sendMessage(ctx, message.Chat.ID, fmt.Sprintf("תודה, צילום המסך של התשלום התקבל. הבקשה מס׳ %d נשלחה לבדיקה, ונעדכן כאן ברגע שהאישור יושלם.", claim.ID))
 }
 
 func (s *BotService) handleStart(ctx context.Context, message *tgbotapi.Message) error {
 	_, err := s.getOrCreateUser(ctx, message.From)
 	if err != nil {
 		s.logger.Error("failed to get or create user", "error", err, "user_id", message.From.ID)
-		return s.sendMessage(ctx, message.Chat.ID, "Something went wrong. Please try again.")
+		return s.sendMessage(ctx, message.Chat.ID, "משהו השתבש. נסה שוב בבקשה.")
 	}
 
 	if s.payBox != nil {
@@ -152,38 +156,38 @@ func (s *BotService) handleStart(ctx context.Context, message *tgbotapi.Message)
 	listings, err := s.loadStartListings(ctx)
 	if err != nil {
 		s.logger.Error("failed to fetch start listings", "error", err)
-		return s.sendMessage(ctx, message.Chat.ID, "Unable to load coupons. Please try again later.")
+		return s.sendMessage(ctx, message.Chat.ID, "לא ניתן לטעון קופונים. נסה שוב מאוחר יותר.")
 	}
 
 	if len(listings) == 0 {
-		return s.sendMessage(ctx, message.Chat.ID, "No coupons available at the moment. Check back soon!")
+		return s.sendMessage(ctx, message.Chat.ID, "כרגע אין קופונים זמינים. בדוק שוב בקרוב!")
 	}
 
 	return s.sendFeaturedListing(ctx, message.Chat.ID, listings, 0)
 }
 
 func (s *BotService) handleHelp(ctx context.Context, message *tgbotapi.Message) error {
-	helpText := `<b>How to use CouponTelBot:</b>
+	helpText := `<b>מדריך שימוש ב-CouponTelBot:</b>
 
-/start - See available coupons`
+/start - הצג קופונים זמינים`
 	if s.isDevelopmentMode() {
 		helpText += `
-(development also shows preview catalog items without inventory)`
+(במצב פיתוח גם מראה פריטים בתצוגה מראש ללא מלאי)`
 	}
 
 	helpText += `
-/help - Show this message
+/help - הצג הודעה זו
 
-<b>How to buy:</b>
-1. Type /start to see available coupons
-2. Open a coupon and start the checkout
-3. Pay through the PayBox link
-4. Upload the payment screenshot here
-5. Wait for admin approval
-6. Show the QR code to the merchant
+<b>אופן הקנייה:</b>
+1. הקלד /start כדי לראות קופונים זמינים
+2. פתח קופון והתחל את תהליך התשלום
+3. שלם דרך קישור PayBox
+4. העלה כאן צילום מסך של התשלום
+5. המתן לאישור מנהל
+6. הצג את קוד ה-QR לסוחר
 
-<b>Need help?</b>
-Use the support button on any coupon detail screen.`
+<b>צריך עזרה?</b>
+השתמש בכפתור התמיכה בכל מסך פרטי קופון.`
 
 	return s.sendMessage(ctx, message.Chat.ID, helpText)
 }
@@ -261,56 +265,60 @@ func (s *BotService) handleCallback(ctx context.Context, callback *tgbotapi.Call
 
 func (s *BotService) handleAdminApproveClaim(ctx context.Context, callback *tgbotapi.CallbackQuery, claimID int64) error {
 	if !s.isTelegramAdmin(callback.From) {
-		return s.sendMessage(ctx, callback.Message.Chat.ID, "You are not allowed to review PayBox claims.")
+		return s.sendMessage(ctx, callback.Message.Chat.ID, "אין לך הרשאה לעיין בתביעות PayBox.")
 	}
 	if s.payBox == nil {
-		return s.sendMessage(ctx, callback.Message.Chat.ID, "PayBox service is not configured.")
+		return s.sendMessage(ctx, callback.Message.Chat.ID, "שירות PayBox לא מוגדר.")
 	}
 
 	result, err := s.payBox.ApproveClaim(ctx, claimID, telegramAdminActor(callback.From), "approved in Telegram")
 	if err != nil {
 		s.logger.Error("failed to approve paybox claim in telegram", "error", err, "claim_id", claimID, "admin_id", callback.From.ID)
-		return s.sendMessage(ctx, callback.Message.Chat.ID, fmt.Sprintf("Could not approve claim #%d: %s", claimID, html.EscapeString(err.Error())))
+		return s.sendMessage(ctx, callback.Message.Chat.ID, fmt.Sprintf("לא ניתן לאשר את התביעה #%d: %s", claimID, html.EscapeString(err.Error())))
 	}
 
-	status := "approved"
+	status := "אושר"
 	if result.SupportState {
-		status = "approved, but support is required before delivery"
+		status = "אושר, אך נדרשת תמיכה לפני המשלוח"
+	} else if result.AlreadyDelivered {
+		status = "כבר אושר ונשלח"
 	}
-	return s.sendMessage(ctx, callback.Message.Chat.ID, fmt.Sprintf("Claim #%d %s.", claimID, status))
+	s.clearAdminClaimKeyboard(ctx, callback)
+	return s.sendMessage(ctx, callback.Message.Chat.ID, fmt.Sprintf("תביעה #%d %s.", claimID, status))
 }
 
 func (s *BotService) handleAdminRejectClaim(ctx context.Context, callback *tgbotapi.CallbackQuery, claimID int64) error {
 	if !s.isTelegramAdmin(callback.From) {
-		return s.sendMessage(ctx, callback.Message.Chat.ID, "You are not allowed to review PayBox claims.")
+		return s.sendMessage(ctx, callback.Message.Chat.ID, "אין לך הרשאה לעיין בתביעות PayBox.")
 	}
 	if s.payBox == nil {
-		return s.sendMessage(ctx, callback.Message.Chat.ID, "PayBox service is not configured.")
+		return s.sendMessage(ctx, callback.Message.Chat.ID, "שירות PayBox לא מוגדר.")
 	}
 
 	if _, _, err := s.payBox.RejectClaim(ctx, claimID, telegramAdminActor(callback.From), "rejected in Telegram"); err != nil {
 		s.logger.Error("failed to reject paybox claim in telegram", "error", err, "claim_id", claimID, "admin_id", callback.From.ID)
-		return s.sendMessage(ctx, callback.Message.Chat.ID, fmt.Sprintf("Could not reject claim #%d: %s", claimID, html.EscapeString(err.Error())))
+		return s.sendMessage(ctx, callback.Message.Chat.ID, fmt.Sprintf("לא ניתן לדחות את התביעה #%d: %s", claimID, html.EscapeString(err.Error())))
 	}
 
-	return s.sendMessage(ctx, callback.Message.Chat.ID, fmt.Sprintf("Claim #%d rejected.", claimID))
+	s.clearAdminClaimKeyboard(ctx, callback)
+	return s.sendMessage(ctx, callback.Message.Chat.ID, fmt.Sprintf("התביעה #%d נדחתה.", claimID))
 }
 
 func (s *BotService) handleBuyOffer(ctx context.Context, callback *tgbotapi.CallbackQuery, offerID int64) error {
 	if s.payBox == nil {
-		return s.sendMessage(ctx, callback.Message.Chat.ID, "Payment is temporarily unavailable. Please try again later.")
+		return s.sendMessage(ctx, callback.Message.Chat.ID, "התשלום אינו זמין כרגע. נסה שוב מאוחר יותר.")
 	}
 
 	user, err := s.getOrCreateUser(ctx, callback.From)
 	if err != nil {
 		s.logger.Error("failed to get paybox user", "error", err, "telegram_user_id", callback.From.ID)
-		return s.sendMessage(ctx, callback.Message.Chat.ID, "Something went wrong. Please try again.")
+		return s.sendMessage(ctx, callback.Message.Chat.ID, "משהו השתבש. נסה שוב בבקשה.")
 	}
 
 	started, err := s.payBox.StartPayment(ctx, user.ID, offerID)
 	if err != nil {
 		s.logger.Error("failed to start paybox payment", "error", err, "user_id", user.ID, "offer_id", offerID)
-		return s.sendMessage(ctx, callback.Message.Chat.ID, "Unable to start PayBox payment for this offer right now.")
+		return s.sendMessage(ctx, callback.Message.Chat.ID, "לא ניתן להתחיל תשלום PayBox עבור הצעה זו כרגע.")
 	}
 
 	if s.pendingClaims == nil {
@@ -406,7 +414,7 @@ func (s *BotService) handleLegacyListingBuy(ctx context.Context, chatID int64) e
 }
 
 func (s *BotService) handleContactSupport(ctx context.Context, chatID int64) error {
-	return s.sendMessage(ctx, chatID, "Support is available here. Send your order number and what went wrong, and we will review it manually.")
+	return s.sendMessage(ctx, chatID, "תמיכה זמינה כאן. שלח/י מספר הזמנה ומה קרה, ונבחן זאת ידנית.")
 }
 
 func (s *BotService) getOrCreateUser(ctx context.Context, from *tgbotapi.User) (*store.User, error) {
@@ -704,10 +712,10 @@ func (s *BotService) sendStartOffers(ctx context.Context, chatID int64) error {
 	offers, err := s.loadStartOffers(ctx)
 	if err != nil {
 		s.logger.Error("failed to fetch paybox offers", "error", err)
-		return s.sendMessage(ctx, chatID, "Unable to load coupons. Please try again later.")
+		return s.sendMessage(ctx, chatID, "לא ניתן לטעון קופונים. נסה שוב מאוחר יותר.")
 	}
 	if len(offers) == 0 {
-		return s.sendMessage(ctx, chatID, "No coupons available at the moment. Check back soon!")
+		return s.sendMessage(ctx, chatID, "כרגע אין קופונים זמינים. בדוק שוב בקרוב!")
 	}
 
 	return s.sendFeaturedOffer(ctx, chatID, offers, 0)
@@ -722,7 +730,7 @@ func (s *BotService) loadStartOffers(ctx context.Context) ([]store.Offer, error)
 
 func (s *BotService) sendFeaturedOffer(ctx context.Context, chatID int64, offers []store.Offer, index int) error {
 	if len(offers) == 0 {
-		return s.sendMessage(ctx, chatID, "No coupons available at the moment. Check back soon!")
+		return s.sendMessage(ctx, chatID, "כרגע אין קופונים זמינים. בדוק שוב בקרוב!")
 	}
 	if index < 0 || index >= len(offers) {
 		index = 0
@@ -744,7 +752,7 @@ func (s *BotService) sendOfferDetails(ctx context.Context, chatID int64, offer s
 		text += "\n\n" + html.EscapeString(offer.MerchantDisclosureText)
 	}
 	if strings.TrimSpace(offer.SupportContact) != "" {
-		text += "\n\n<b>Support:</b> " + html.EscapeString(offer.SupportContact)
+		text += "\n\n<b>תמיכה:</b> " + html.EscapeString(offer.SupportContact)
 	}
 	msg := tgbotapi.NewMessage(chatID, normalizeTelegramText(text))
 	msg.ParseMode = rendered.ParseMode
@@ -790,8 +798,19 @@ func (s *BotService) sendPayBoxPaymentInstructions(ctx context.Context, chatID i
 	))
 	msg.ReplyMarkup = &tgbotapi.InlineKeyboardMarkup{InlineKeyboard: rows}
 
-	_, err := s.botAPI.Send(msg)
-	return err
+	if _, err := s.botAPI.Send(msg); err != nil {
+		return err
+	}
+
+	timer := time.NewTimer(payBoxScreenshotPromptDelay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+	}
+
+	return s.sendMessage(ctx, chatID, "אנא העלה צילום מסך של תשלום PayBox כקובץ תמונה או מסמך תמונה.")
 }
 
 func (s *BotService) supportChatURL(supportContact string) string {
@@ -978,15 +997,16 @@ func (s *BotService) SendPhotoMessage(ctx context.Context, telegramUserID int64,
 }
 
 func (s *BotService) NotifyPaymentClaimSubmitted(ctx context.Context, claim store.ManualPaymentClaim) error {
-	if !s.hasTelegramAdmins() || s.botAPI == nil {
-		s.logger.Warn("paybox claim submitted without telegram admins configured", "claim_id", claim.ID, "order_id", claim.OrderID)
+	recipients := s.adminNotificationRecipients()
+	if len(recipients) == 0 || s.botAPI == nil {
+		s.logger.Warn("paybox claim submitted without telegram admin notification destination configured", "claim_id", claim.ID, "order_id", claim.OrderID)
 		return nil
 	}
 
 	caption := formatAdminPaymentClaimMessage(claim)
 	keyboard := adminPaymentClaimKeyboard(claim.ID)
-	for _, adminID := range s.adminUserIDs {
-		msg := tgbotapi.NewPhoto(adminID, tgbotapi.FileID(claim.PaymentScreenshotFileID))
+	for _, chatID := range recipients {
+		msg := tgbotapi.NewPhoto(chatID, tgbotapi.FileID(claim.PaymentScreenshotFileID))
 		msg.Caption = normalizeTelegramText(caption)
 		msg.ParseMode = tgbotapi.ModeHTML
 		msg.ReplyMarkup = keyboard
@@ -994,16 +1014,16 @@ func (s *BotService) NotifyPaymentClaimSubmitted(ctx context.Context, claim stor
 			s.logger.Error("failed to send paybox claim screenshot to telegram admin",
 				"error", err,
 				"claim_id", claim.ID,
-				"admin_telegram_user_id", adminID,
+				"admin_telegram_chat_id", chatID,
 			)
-			fallback := tgbotapi.NewMessage(adminID, normalizeTelegramText(caption+"\n\nScreenshot file id: <code>"+html.EscapeString(claim.PaymentScreenshotFileID)+"</code>"))
+			fallback := tgbotapi.NewMessage(chatID, normalizeTelegramText(caption+"\n\nScreenshot file id: <code>"+html.EscapeString(claim.PaymentScreenshotFileID)+"</code>"))
 			fallback.ParseMode = tgbotapi.ModeHTML
 			fallback.ReplyMarkup = keyboard
 			if _, fallbackErr := s.botAPI.Send(fallback); fallbackErr != nil {
 				s.logger.Error("failed to send paybox claim fallback to telegram admin",
 					"error", fallbackErr,
 					"claim_id", claim.ID,
-					"admin_telegram_user_id", adminID,
+					"admin_telegram_chat_id", chatID,
 				)
 			}
 		}
@@ -1012,30 +1032,67 @@ func (s *BotService) NotifyPaymentClaimSubmitted(ctx context.Context, claim stor
 }
 
 func (s *BotService) NotifyPaymentClaimApproved(ctx context.Context, result services.PayBoxApprovalResult) error {
-	return s.notifyTelegramAdmins(ctx, fmt.Sprintf("Claim #%d approved. Order %s was processed.", result.Claim.ID, html.EscapeString(result.Order.OrderNumber)))
+	if result.AlreadyDelivered {
+		return s.notifyTelegramAdmins(ctx, fmt.Sprintf("התביעה #%d כבר אושרה וקוד ה-QR כבר נשלח. הזמנה %s.", result.Claim.ID, html.EscapeString(result.Order.OrderNumber)))
+	}
+	return s.notifyTelegramAdmins(ctx, fmt.Sprintf("התביעה #%d אושרה. הזמנה %s עובדה.", result.Claim.ID, html.EscapeString(result.Order.OrderNumber)))
 }
 
 func (s *BotService) NotifyPaymentClaimRejected(ctx context.Context, claim store.ManualPaymentClaim, order store.MVPOrder) error {
-	return s.notifyTelegramAdmins(ctx, fmt.Sprintf("Claim #%d rejected. Order %s was marked rejected.", claim.ID, html.EscapeString(order.OrderNumber)))
+	return s.notifyTelegramAdmins(ctx, fmt.Sprintf("התביעה #%d נדחתה. הזמנה %s סומנה כדחויה.", claim.ID, html.EscapeString(order.OrderNumber)))
 }
 
 func (s *BotService) NotifyPaymentClaimNeedsSupport(ctx context.Context, result services.PayBoxApprovalResult) error {
-	return s.notifyTelegramAdmins(ctx, fmt.Sprintf("Claim #%d was approved but needs support before delivery.", result.Claim.ID))
+	return s.notifyTelegramAdmins(ctx, fmt.Sprintf("התביעה #%d אושרה אך דורשת טיפול תמיכה לפני המשלוח.", result.Claim.ID))
+}
+
+func (s *BotService) NotifyCouponRedeemed(ctx context.Context, result store.CouponRedemptionScanResult) error {
+	return s.notifyTelegramAdmins(ctx, formatAdminCouponRedemptionMessage(result))
 }
 
 func (s *BotService) notifyTelegramAdmins(ctx context.Context, text string) error {
-	if !s.hasTelegramAdmins() || s.botAPI == nil {
+	recipients := s.adminNotificationRecipients()
+	if len(recipients) == 0 || s.botAPI == nil {
 		return nil
 	}
 
-	for _, adminID := range s.adminUserIDs {
-		msg := tgbotapi.NewMessage(adminID, normalizeTelegramText(text))
+	for _, chatID := range recipients {
+		msg := tgbotapi.NewMessage(chatID, normalizeTelegramText(text))
 		msg.ParseMode = tgbotapi.ModeHTML
 		if _, err := s.botAPI.Send(msg); err != nil {
-			s.logger.Error("failed to notify telegram admin", "error", err, "admin_telegram_user_id", adminID)
+			s.logger.Error("failed to notify telegram admin", "error", err, "admin_telegram_chat_id", chatID)
 		}
 	}
 	return nil
+}
+
+func formatAdminCouponRedemptionMessage(result store.CouponRedemptionScanResult) string {
+	title := "קופון מומש בהצלחה"
+	if !result.FirstScan {
+		title = "נסיון סריקה חוזרת"
+	}
+
+	lines := []string{"<b>" + title + "</b>"}
+	if strings.TrimSpace(result.OrderNumber) != "" {
+		lines = append(lines, "Order: "+html.EscapeString(result.OrderNumber))
+	}
+	if strings.TrimSpace(result.MerchantName) != "" {
+		lines = append(lines, "Merchant: "+html.EscapeString(result.MerchantName))
+	}
+	if strings.TrimSpace(result.OfferTitle) != "" {
+		lines = append(lines, "Coupon: "+html.EscapeString(result.OfferTitle))
+	}
+	lines = append(lines, "Status: "+html.EscapeString(result.Redemption.Status))
+	if result.Redemption.ScannedAt != nil {
+		lines = append(lines, "Scanned at: "+html.EscapeString(result.Redemption.ScannedAt.Local().Format("15:04 02/01/2006")))
+	}
+	if strings.TrimSpace(result.BuyerDisplay) != "" {
+		lines = append(lines, "Buyer: "+html.EscapeString(result.BuyerDisplay))
+	}
+	if result.BuyerTelegramID != 0 {
+		lines = append(lines, fmt.Sprintf("Buyer Telegram ID: <code>%d</code>", result.BuyerTelegramID))
+	}
+	return strings.Join(lines, "\n")
 }
 
 func (s *BotService) SendPostDeliveryOffer(ctx context.Context, telegramUserID int64) error {
@@ -1054,7 +1111,7 @@ func (s *BotService) SendPostDeliveryOffer(ctx context.Context, telegramUserID i
 		return nil
 	}
 
-	message := "Want another coupon? Here is a fresh deal:"
+	message := "רוצה עוד קופון? הנה עסקה חדשה:"
 	if err := s.sendMessage(ctx, telegramUserID, message); err != nil {
 		return err
 	}
@@ -1070,9 +1127,9 @@ func (s *BotService) NotifyExpiredCheckoutHold(ctx context.Context, hold store.R
 		return fmt.Errorf("telegram user id is required")
 	}
 
-	message := "<b>Your checkout window expired.</b>\n" +
-		"We released that reserved coupon because payment was not completed in time.\n\n" +
-		"Here is another available deal:"
+	message := "<b>חלון התשלום שלך פג.</b>\n" +
+		"שחררנו את הקופון שהוזמן מאחר שהתשלום לא הושלם בזמן.\n\n" +
+		"הנה עסקה זמינה נוספת:"
 	if err := s.sendMessage(ctx, hold.TelegramUserID, message); err != nil {
 		return err
 	}
@@ -1082,7 +1139,7 @@ func (s *BotService) NotifyExpiredCheckoutHold(ctx context.Context, hold store.R
 		return err
 	}
 	if len(listings) == 0 {
-		return s.sendMessage(ctx, hold.TelegramUserID, "No coupons are available right now. Send /start again soon.")
+		return s.sendMessage(ctx, hold.TelegramUserID, "כרגע אין קופונים זמינים. שלח /start שוב בקרוב.")
 	}
 
 	return s.sendFeaturedListing(ctx, hold.TelegramUserID, listings, 0)
@@ -1176,11 +1233,20 @@ func formatAdminPaymentClaimMessage(claim store.ManualPaymentClaim) string {
 	lines := []string{
 		"<b>PayBox payment screenshot</b>",
 		fmt.Sprintf("Claim: #%d", claim.ID),
-		fmt.Sprintf("Order ID: %d", claim.OrderID),
+		fmt.Sprintf("Order: %s", adminOrderLabel(claim)),
 		fmt.Sprintf("Amount: %s", formatPrice(claim.ClaimedAmount)),
 	}
 	if strings.TrimSpace(claim.PayerUsername) != "" {
-		lines = append(lines, "Buyer: "+html.EscapeString(claim.PayerUsername))
+		lines = append(lines, "Buyer claim: "+html.EscapeString(claim.PayerUsername))
+	}
+	if strings.TrimSpace(claim.BuyerDisplay) != "" {
+		lines = append(lines, "Buyer name: "+html.EscapeString(claim.BuyerDisplay))
+	}
+	if claim.BuyerTelegramID != 0 {
+		lines = append(lines, fmt.Sprintf("Buyer Telegram chat ID: <code>%d</code>", claim.BuyerTelegramID))
+	}
+	if strings.TrimSpace(claim.MerchantName) != "" || strings.TrimSpace(claim.OfferTitle) != "" {
+		lines = append(lines, "Offer: "+html.EscapeString(adminOfferLabel(claim)))
 	}
 	if strings.TrimSpace(claim.PaymentScreenshotCaption) != "" {
 		lines = append(lines, "Caption: "+html.EscapeString(claim.PaymentScreenshotCaption))
@@ -1200,8 +1266,51 @@ func adminPaymentClaimKeyboard(claimID int64) *tgbotapi.InlineKeyboardMarkup {
 	}
 }
 
+func (s *BotService) clearAdminClaimKeyboard(ctx context.Context, callback *tgbotapi.CallbackQuery) {
+	if s == nil || s.botAPI == nil || callback == nil || callback.Message == nil || callback.Message.Chat == nil {
+		return
+	}
+	empty := tgbotapi.InlineKeyboardMarkup{}
+	edit := tgbotapi.NewEditMessageReplyMarkup(callback.Message.Chat.ID, callback.Message.MessageID, empty)
+	if _, err := s.botAPI.Request(edit); err != nil {
+		s.logger.WarnContext(ctx, "failed to clear admin payment claim keyboard",
+			"error", err,
+			"chat_id", callback.Message.Chat.ID,
+			"message_id", callback.Message.MessageID,
+		)
+	}
+}
+
+func adminOrderLabel(claim store.ManualPaymentClaim) string {
+	if strings.TrimSpace(claim.OrderNumber) == "" {
+		return fmt.Sprintf("#%d", claim.OrderID)
+	}
+	return fmt.Sprintf("%s (#%d)", html.EscapeString(claim.OrderNumber), claim.OrderID)
+}
+
+func adminOfferLabel(claim store.ManualPaymentClaim) string {
+	parts := make([]string, 0, 2)
+	if strings.TrimSpace(claim.MerchantName) != "" {
+		parts = append(parts, strings.TrimSpace(claim.MerchantName))
+	}
+	if strings.TrimSpace(claim.OfferTitle) != "" {
+		parts = append(parts, strings.TrimSpace(claim.OfferTitle))
+	}
+	return strings.Join(parts, " - ")
+}
+
 func (s *BotService) hasTelegramAdmins() bool {
 	return s != nil && len(s.adminUserIDs) > 0
+}
+
+func (s *BotService) adminNotificationRecipients() []int64 {
+	if s == nil {
+		return nil
+	}
+	if s.adminReviewChatID != 0 {
+		return []int64{s.adminReviewChatID}
+	}
+	return append([]int64(nil), s.adminUserIDs...)
 }
 
 func (s *BotService) isTelegramAdmin(user *tgbotapi.User) bool {
@@ -1223,6 +1332,13 @@ func buildAdminUserIDSet(ids []int64) map[int64]struct{} {
 		}
 	}
 	return set
+}
+
+func adminReviewChatIDFromConfig(cfg *config.Config) int64 {
+	if cfg == nil {
+		return 0
+	}
+	return cfg.TelegramAdminReviewChatID
 }
 
 func telegramAdminActor(user *tgbotapi.User) string {

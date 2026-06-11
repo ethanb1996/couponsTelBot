@@ -103,12 +103,13 @@ type PayBoxPaymentStart struct {
 }
 
 type PayBoxApprovalResult struct {
-	Order        store.MVPOrder
-	Claim        store.ManualPaymentClaim
-	Code         *store.PredefinedCode
-	Redemption   *store.CouponRedemption
-	Delivery     *store.MVPDelivery
-	SupportState bool
+	Order            store.MVPOrder
+	Claim            store.ManualPaymentClaim
+	Code             *store.PredefinedCode
+	Redemption       *store.CouponRedemption
+	Delivery         *store.MVPDelivery
+	SupportState     bool
+	AlreadyDelivered bool
 }
 
 type PayBoxPaymentEvidence struct {
@@ -240,6 +241,14 @@ func (s *PayBoxService) ApproveClaim(ctx context.Context, claimID int64, reviewe
 		}
 		s.recordPaymentClaimAudit(ctx, approved.Claim.ID, reviewedBy, "approve_payment_claim", reviewNote, result)
 		if err := s.notifyAdminNeedsSupport(ctx, result); err != nil {
+			return PayBoxApprovalResult{}, err
+		}
+		return result, nil
+	}
+
+	if strings.EqualFold(strings.TrimSpace(approved.Order.Status), "coupon_sent") {
+		result.AlreadyDelivered = true
+		if err := s.notifyAdminApproved(ctx, result); err != nil {
 			return PayBoxApprovalResult{}, err
 		}
 		return result, nil
