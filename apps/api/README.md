@@ -40,11 +40,13 @@ The MVP payment flow is manual PayBox approval:
 - Only Telegram users listed in `TELEGRAM_ADMIN_USER_IDS` may approve or reject.
 - The web admin panel exposes `/admin/audit` for audit logs, with `/admin/payments` kept as a fallback claim queue.
 - Approval assigns a predefined code, creates a redemption token, sends a QR code to the buyer, and records delivery.
-- Merchant scans the QR code, which calls `/api/redemptions/scan/{token}`, records redemption, shows a Hebrew merchant result page, and notifies the admin review chat.
-- On first redemption, the API can send the merchant a confirmation email through SMTP when configured.
+- Merchant scans the QR code, which calls `/api/redemptions/scan/{token}` and shows a Hebrew coupon review page without redeeming.
+- The restaurant clicks the Hebrew redeem button, which posts to `/api/redemptions/redeem/{token}`; first redemption updates state, notifies the admin review chat, and notifies the configured restaurant Telegram chat/channel.
+- On first redemption, the API can also send the merchant a confirmation email through Resend when configured.
 
 Set `TELEGRAM_ADMIN_USER_IDS` to a comma-separated list of Telegram user IDs, for example `TELEGRAM_ADMIN_USER_IDS=123456,987654`.
 Set `TELEGRAM_ADMIN_REVIEW_CHAT_ID` to a signed Telegram chat id for the internal review chat.
+Set `RESEND_API_KEY` and `RESEND_FROM` to enable merchant redemption emails. Replace `re_xxxxxxxxx` with your real Resend API key.
 
 The full implemented flow is documented in [docs/actual-flow.md](../../docs/actual-flow.md).
 

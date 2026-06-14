@@ -139,16 +139,18 @@ type FulfillmentJob struct {
 }
 
 type MerchantPartner struct {
-	ID                     int64
-	BusinessName           string
-	ContactReference       string
-	Status                 string
-	ApprovalNotes          string
-	MerchantDisclosureText string
-	SupportContact         string
-	DefaultPaymentLink     string
-	CreatedAt              time.Time
-	UpdatedAt              time.Time
+	ID                              int64
+	BusinessName                    string
+	ContactReference                string
+	Status                          string
+	ApprovalNotes                   string
+	MerchantDisclosureText          string
+	SupportContact                  string
+	DefaultPaymentLink              string
+	RedemptionNotificationChatID    *int64
+	RedemptionNotificationChatTitle string
+	CreatedAt                       time.Time
+	UpdatedAt                       time.Time
 }
 
 type Offer struct {
@@ -232,28 +234,49 @@ type ManualPaymentClaim struct {
 }
 
 type CouponRedemption struct {
-	ID                int64
-	OrderID           int64
-	PredefinedCodeID  int64
-	RedemptionToken   string
-	Status            string
-	MerchantReference string
-	ScannerReference  string
-	ScanMetadataJSON  string
-	ScannedAt         *time.Time
-	CreatedAt         time.Time
-	UpdatedAt         time.Time
+	ID                              int64
+	OrderID                         int64
+	PredefinedCodeID                int64
+	RedemptionToken                 string
+	Status                          string
+	MerchantReference               string
+	ScannerReference                string
+	ScanMetadataJSON                string
+	ScannedAt                       *time.Time
+	FirstViewedAt                   *time.Time
+	RedeemedAt                      *time.Time
+	RedeemedByReference             string
+	RedeemMetadataJSON              string
+	RestaurantNotificationChatID    *int64
+	RestaurantNotificationMessageID *int64
+	RestaurantNotifiedAt            *time.Time
+	RestaurantNotificationError     string
+	CreatedAt                       time.Time
+	UpdatedAt                       time.Time
 }
 
-type CouponRedemptionScanResult struct {
-	Redemption      CouponRedemption
-	FirstScan       bool
-	OrderNumber     string
-	MerchantName    string
-	MerchantContact string
-	OfferTitle      string
-	BuyerDisplay    string
-	BuyerTelegramID int64
+type CouponRedemptionPreview struct {
+	Redemption             CouponRedemption
+	OrderNumber            string
+	MerchantName           string
+	MerchantContact        string
+	OfferTitle             string
+	AmountPaid             int64
+	CurrencyCode           string
+	PaymentStatusSummary   string
+	ApprovalTime           *time.Time
+	BuyerDisplay           string
+	BuyerTelegramID        int64
+	RedemptionTerms        string
+	PredefinedCodeExpiryAt *time.Time
+}
+
+type CouponRedemptionConfirmResult struct {
+	Preview                       CouponRedemptionPreview
+	FirstRedeem                   bool
+	RestaurantNotificationChatID  *int64
+	RestaurantNotificationTitle   string
+	RestaurantNotificationMessage *int64
 }
 
 type FulfillmentPreparation struct {
@@ -427,11 +450,19 @@ type CreateCouponRedemptionParams struct {
 	RedemptionToken  string
 }
 
-type RecordCouponRedemptionScanParams struct {
-	RedemptionToken   string
-	MerchantReference string
-	ScannerReference  string
-	ScanMetadataJSON  string
+type ConfirmCouponRedemptionParams struct {
+	RedemptionToken                      string
+	MerchantReference                    string
+	ScannerReference                     string
+	RedeemMetadataJSON                   string
+	RestaurantNotificationFallbackChatID int64
+}
+
+type RecordRestaurantRedemptionNotificationParams struct {
+	CouponRedemptionID int64
+	ChatID             int64
+	MessageID          int64
+	Error              string
 }
 type CreateListingParams struct {
 	MerchantName            string

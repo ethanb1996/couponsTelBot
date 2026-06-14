@@ -60,6 +60,8 @@ func (p *Postgres) CreateMerchantPartner(ctx context.Context, params CreateMerch
 			merchant_disclosure_text,
 			support_contact,
 			default_payment_link,
+			redemption_notification_chat_id,
+			redemption_notification_chat_title,
 			created_at,
 			updated_at
 	`,
@@ -1127,6 +1129,8 @@ func scanMerchantPartner(row interface {
 		&partner.MerchantDisclosureText,
 		&partner.SupportContact,
 		&partner.DefaultPaymentLink,
+		&partner.RedemptionNotificationChatID,
+		&partner.RedemptionNotificationChatTitle,
 		&partner.CreatedAt,
 		&partner.UpdatedAt,
 	)

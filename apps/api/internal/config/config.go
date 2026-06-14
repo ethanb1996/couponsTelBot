@@ -13,35 +13,33 @@ import (
 )
 
 type Config struct {
-	AppEnv                    string
-	Port                      string
-	AppBaseURL                string
-	DatabaseURL               string
-	DatabaseApplicationName   string
-	DatabaseConnectTimeout    time.Duration
-	DatabaseMaxConns          int32
-	DatabaseMinConns          int32
-	DatabaseMaxConnLifetime   time.Duration
-	DatabaseMaxConnIdleTime   time.Duration
-	DatabaseHealthCheckPeriod time.Duration
-	DatabaseQueryExecMode     string
-	TelegramBotToken          string
-	TelegramWebhookSecret     string
-	TelegramAdminUserIDs      []int64
-	TelegramAdminReviewChatID int64
-	AdminBasicAuthUser        string
-	AdminBasicAuthPass        string
-	CouponEncryptionKey       string
-	SMTPHost                  string
-	SMTPPort                  int
-	SMTPUsername              string
-	SMTPPassword              string
-	SMTPFrom                  string
-	OpsSweepInterval          time.Duration
-	OpsDeliveryAlertAfter     time.Duration
-	OpsReconcileAfter         time.Duration
-	OpsCheckoutHoldDuration   time.Duration
-	OpsBatchSize              int
+	AppEnv                             string
+	Port                               string
+	AppBaseURL                         string
+	DatabaseURL                        string
+	DatabaseApplicationName            string
+	DatabaseConnectTimeout             time.Duration
+	DatabaseMaxConns                   int32
+	DatabaseMinConns                   int32
+	DatabaseMaxConnLifetime            time.Duration
+	DatabaseMaxConnIdleTime            time.Duration
+	DatabaseHealthCheckPeriod          time.Duration
+	DatabaseQueryExecMode              string
+	TelegramBotToken                   string
+	TelegramWebhookSecret              string
+	TelegramAdminUserIDs               []int64
+	TelegramAdminReviewChatID          int64
+	TelegramRestaurantRedemptionChatID int64
+	AdminBasicAuthUser                 string
+	AdminBasicAuthPass                 string
+	CouponEncryptionKey                string
+	ResendAPIKey                       string
+	ResendFrom                         string
+	OpsSweepInterval                   time.Duration
+	OpsDeliveryAlertAfter              time.Duration
+	OpsReconcileAfter                  time.Duration
+	OpsCheckoutHoldDuration            time.Duration
+	OpsBatchSize                       int
 }
 
 func Load() (Config, error) {
@@ -103,11 +101,6 @@ func Load() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
-	smtpPort, err := intEnvWithDefault("SMTP_PORT", 587)
-	if err != nil {
-		return Config{}, err
-	}
-
 	telegramAdminUserIDs, err := int64ListEnv("TELEGRAM_ADMIN_USER_IDS")
 	if err != nil {
 		return Config{}, err
@@ -116,37 +109,39 @@ func Load() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	telegramRestaurantRedemptionChatID, err := optionalNonZeroInt64Env("TELEGRAM_RESTAURANT_REDEMPTION_CHAT_ID")
+	if err != nil {
+		return Config{}, err
+	}
 
 	cfg := Config{
-		AppEnv:                    envWithDefault("APP_ENV", "development"),
-		Port:                      envWithDefault("PORT", "8080"),
-		AppBaseURL:                envWithDefault("APP_BASE_URL", "http://localhost:8080"),
-		DatabaseURL:               strings.TrimSpace(os.Getenv("DATABASE_URL")),
-		DatabaseApplicationName:   envWithDefault("DATABASE_APPLICATION_NAME", "coupons-api"),
-		DatabaseConnectTimeout:    databaseConnectTimeout,
-		DatabaseMaxConns:          databaseMaxConns,
-		DatabaseMinConns:          databaseMinConns,
-		DatabaseMaxConnLifetime:   databaseMaxConnLifetime,
-		DatabaseMaxConnIdleTime:   databaseMaxConnIdleTime,
-		DatabaseHealthCheckPeriod: databaseHealthCheckPeriod,
-		DatabaseQueryExecMode:     strings.ToLower(envWithDefault("DATABASE_QUERY_EXEC_MODE", "exec")),
-		TelegramBotToken:          strings.TrimSpace(os.Getenv("TELEGRAM_BOT_TOKEN")),
-		TelegramWebhookSecret:     strings.TrimSpace(os.Getenv("TELEGRAM_WEBHOOK_SECRET")),
-		TelegramAdminUserIDs:      telegramAdminUserIDs,
-		TelegramAdminReviewChatID: telegramAdminReviewChatID,
-		AdminBasicAuthUser:        strings.TrimSpace(os.Getenv("ADMIN_BASIC_AUTH_USER")),
-		AdminBasicAuthPass:        strings.TrimSpace(os.Getenv("ADMIN_BASIC_AUTH_PASS")),
-		CouponEncryptionKey:       strings.TrimSpace(os.Getenv("COUPON_ENCRYPTION_KEY")),
-		SMTPHost:                  strings.TrimSpace(os.Getenv("SMTP_HOST")),
-		SMTPPort:                  smtpPort,
-		SMTPUsername:              strings.TrimSpace(os.Getenv("SMTP_USERNAME")),
-		SMTPPassword:              strings.TrimSpace(os.Getenv("SMTP_PASSWORD")),
-		SMTPFrom:                  strings.TrimSpace(os.Getenv("SMTP_FROM")),
-		OpsSweepInterval:          opsSweepInterval,
-		OpsDeliveryAlertAfter:     opsDeliveryAlertAfter,
-		OpsReconcileAfter:         opsReconcileAfter,
-		OpsCheckoutHoldDuration:   opsCheckoutHoldDuration,
-		OpsBatchSize:              opsBatchSize,
+		AppEnv:                             envWithDefault("APP_ENV", "development"),
+		Port:                               envWithDefault("PORT", "8080"),
+		AppBaseURL:                         envWithDefault("APP_BASE_URL", "http://localhost:8080"),
+		DatabaseURL:                        strings.TrimSpace(os.Getenv("DATABASE_URL")),
+		DatabaseApplicationName:            envWithDefault("DATABASE_APPLICATION_NAME", "coupons-api"),
+		DatabaseConnectTimeout:             databaseConnectTimeout,
+		DatabaseMaxConns:                   databaseMaxConns,
+		DatabaseMinConns:                   databaseMinConns,
+		DatabaseMaxConnLifetime:            databaseMaxConnLifetime,
+		DatabaseMaxConnIdleTime:            databaseMaxConnIdleTime,
+		DatabaseHealthCheckPeriod:          databaseHealthCheckPeriod,
+		DatabaseQueryExecMode:              strings.ToLower(envWithDefault("DATABASE_QUERY_EXEC_MODE", "exec")),
+		TelegramBotToken:                   strings.TrimSpace(os.Getenv("TELEGRAM_BOT_TOKEN")),
+		TelegramWebhookSecret:              strings.TrimSpace(os.Getenv("TELEGRAM_WEBHOOK_SECRET")),
+		TelegramAdminUserIDs:               telegramAdminUserIDs,
+		TelegramAdminReviewChatID:          telegramAdminReviewChatID,
+		TelegramRestaurantRedemptionChatID: telegramRestaurantRedemptionChatID,
+		AdminBasicAuthUser:                 strings.TrimSpace(os.Getenv("ADMIN_BASIC_AUTH_USER")),
+		AdminBasicAuthPass:                 strings.TrimSpace(os.Getenv("ADMIN_BASIC_AUTH_PASS")),
+		CouponEncryptionKey:                strings.TrimSpace(os.Getenv("COUPON_ENCRYPTION_KEY")),
+		ResendAPIKey:                       strings.TrimSpace(os.Getenv("RESEND_API_KEY")),
+		ResendFrom:                         strings.TrimSpace(os.Getenv("RESEND_FROM")),
+		OpsSweepInterval:                   opsSweepInterval,
+		OpsDeliveryAlertAfter:              opsDeliveryAlertAfter,
+		OpsReconcileAfter:                  opsReconcileAfter,
+		OpsCheckoutHoldDuration:            opsCheckoutHoldDuration,
+		OpsBatchSize:                       opsBatchSize,
 	}
 
 	var missing []string
@@ -393,11 +388,14 @@ func validateDatabaseConfig(cfg Config) error {
 		return fmt.Errorf("OPS_BATCH_SIZE must be greater than zero")
 	}
 
-	if cfg.SMTPPort <= 0 {
-		return fmt.Errorf("SMTP_PORT must be greater than zero")
+	if cfg.ResendAPIKey == "re_xxxxxxxxx" {
+		return fmt.Errorf("RESEND_API_KEY is still the sample placeholder; replace re_xxxxxxxxx with your real Resend API key")
 	}
-	if cfg.SMTPHost != "" && cfg.SMTPFrom == "" {
-		return fmt.Errorf("SMTP_FROM is required when SMTP_HOST is set")
+	if cfg.ResendAPIKey != "" && cfg.ResendFrom == "" {
+		return fmt.Errorf("RESEND_FROM is required when RESEND_API_KEY is set")
+	}
+	if cfg.ResendFrom != "" && cfg.ResendAPIKey == "" {
+		return fmt.Errorf("RESEND_API_KEY is required when RESEND_FROM is set")
 	}
 
 	switch cfg.DatabaseQueryExecMode {

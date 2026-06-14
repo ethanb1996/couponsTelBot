@@ -56,12 +56,9 @@ func NewRouter(deps Dependencies) (Router, error) {
 	}
 	botService.SetPayBoxFlow(payBoxService)
 
-	emailNotifier, err := services.NewSMTPRedemptionNotifier(services.SMTPRedemptionNotifierOptions{
-		Host:     deps.Config.SMTPHost,
-		Port:     deps.Config.SMTPPort,
-		Username: deps.Config.SMTPUsername,
-		Password: deps.Config.SMTPPassword,
-		From:     deps.Config.SMTPFrom,
+	emailNotifier, err := services.NewResendRedemptionNotifier(services.ResendRedemptionNotifierOptions{
+		APIKey: deps.Config.ResendAPIKey,
+		From:   deps.Config.ResendFrom,
 	})
 	if err != nil {
 		return Router{}, err
@@ -82,8 +79,10 @@ func NewRouter(deps Dependencies) (Router, error) {
 		http.Redirect(w, r, "/admin/", http.StatusSeeOther)
 	})
 	mux.HandleFunc("/webhooks/telegram", telegramHandler.ServeHTTP)
-	mux.HandleFunc("/api/redemptions/scan", redemptionScanHandler(deps.Store, redemptionNotifier))
-	mux.HandleFunc("/api/redemptions/scan/", redemptionScanByTokenHandler(deps.Store, redemptionNotifier))
+	mux.HandleFunc("/api/redemptions/scan", redemptionScanHandler())
+	mux.HandleFunc("/api/redemptions/scan/", redemptionScanByTokenHandler(deps.Store))
+	mux.HandleFunc("/api/redemptions/redeem", redemptionRedeemHandler(deps.Store, redemptionNotifier, deps.Config.TelegramRestaurantRedemptionChatID))
+	mux.HandleFunc("/api/redemptions/redeem/", redemptionRedeemByTokenHandler(deps.Store, redemptionNotifier, deps.Config.TelegramRestaurantRedemptionChatID))
 
 	return Router{
 		Handler: Chain(

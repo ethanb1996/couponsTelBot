@@ -1046,8 +1046,17 @@ func (s *BotService) NotifyPaymentClaimNeedsSupport(ctx context.Context, result 
 	return s.notifyTelegramAdmins(ctx, fmt.Sprintf("התביעה #%d אושרה אך דורשת טיפול תמיכה לפני המשלוח.", result.Claim.ID))
 }
 
-func (s *BotService) NotifyCouponRedeemed(ctx context.Context, result store.CouponRedemptionScanResult) error {
-	return s.notifyTelegramAdmins(ctx, formatAdminCouponRedemptionMessage(result))
+func (s *BotService) NotifyCouponRedeemed(ctx context.Context, result store.CouponRedemptionConfirmResult) error {
+	var firstErr error
+	if err := s.notifyTelegramAdmins(ctx, formatAdminCouponRedemptionMessage(result)); err != nil {
+		firstErr = err
+	}
+	if result.FirstRedeem {
+		if err := s.notifyRestaurantCouponRedeemed(ctx, result); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
 }
 
 func (s *BotService) notifyTelegramAdmins(ctx context.Context, text string) error {
@@ -1056,42 +1065,117 @@ func (s *BotService) notifyTelegramAdmins(ctx context.Context, text string) erro
 		return nil
 	}
 
+	var firstErr error
 	for _, chatID := range recipients {
 		msg := tgbotapi.NewMessage(chatID, normalizeTelegramText(text))
 		msg.ParseMode = tgbotapi.ModeHTML
 		if _, err := s.botAPI.Send(msg); err != nil {
 			s.logger.Error("failed to notify telegram admin", "error", err, "admin_telegram_chat_id", chatID)
+			if firstErr == nil {
+				firstErr = err
+			}
 		}
 	}
-	return nil
+	return firstErr
 }
 
-func formatAdminCouponRedemptionMessage(result store.CouponRedemptionScanResult) string {
-	title := "קופון מומש בהצלחה"
-	if !result.FirstScan {
-		title = "נסיון סריקה חוזרת"
+func formatAdminCouponRedemptionMessage(result store.CouponRedemptionConfirmResult) string {
+	title := "✅ מימוש קופון במסעדה"
+	if !result.FirstRedeem {
+		title = "⚠️ ניסיון מימוש חוזר"
+	}
+	lines := []string{"<b>" + title + "</b>"}
+	if strings.TrimSpace(result.Preview.OrderNumber) != "" {
+		lines = append(lines, "מספר הזמנה: "+html.EscapeString(result.Preview.OrderNumber))
+	}
+	if strings.TrimSpace(result.Preview.MerchantName) != "" {
+		lines = append(lines, "בית עסק: "+html.EscapeString(result.Preview.MerchantName))
+	}
+	if strings.TrimSpace(result.Preview.OfferTitle) != "" {
+		lines = append(lines, "קופון: "+html.EscapeString(result.Preview.OfferTitle))
+	}
+	if result.FirstRedeem {
+		lines = append(lines, "סכום ששולם: "+html.EscapeString(formatPrice(result.Preview.AmountPaid)))
+		lines = append(lines, "סטטוס תשלום: "+html.EscapeString(result.Preview.PaymentStatusSummary))
+	}
+	if result.Preview.Redemption.RedeemedAt != nil {
+		label := "שעת מימוש"
+		if !result.FirstRedeem {
+			label = "מומש לראשונה"
+		}
+		lines = append(lines, label+": "+html.EscapeString(result.Preview.Redemption.RedeemedAt.Local().Format("15:04 02/01/2006")))
+	}
+	if strings.TrimSpace(result.Preview.BuyerDisplay) != "" {
+		lines = append(lines, "לקוח: "+html.EscapeString(result.Preview.BuyerDisplay))
+	}
+	if result.Preview.BuyerTelegramID != 0 {
+		lines = append(lines, fmt.Sprintf("Telegram ID: <code>%d</code>", result.Preview.BuyerTelegramID))
+	}
+	if result.FirstRedeem {
+		if result.RestaurantNotificationChatID != nil && *result.RestaurantNotificationChatID != 0 {
+			lines = append(lines, fmt.Sprintf("נשלח אישור לצ׳אט העסק: <code>%d</code>", *result.RestaurantNotificationChatID))
+		} else {
+			lines = append(lines, "לא מוגדר צ׳אט עסק לקבלת אישור.")
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+func (s *BotService) notifyRestaurantCouponRedeemed(ctx context.Context, result store.CouponRedemptionConfirmResult) error {
+	if result.RestaurantNotificationChatID == nil || *result.RestaurantNotificationChatID == 0 || s.botAPI == nil {
+		return nil
 	}
 
-	lines := []string{"<b>" + title + "</b>"}
-	if strings.TrimSpace(result.OrderNumber) != "" {
-		lines = append(lines, "Order: "+html.EscapeString(result.OrderNumber))
+	chatID := *result.RestaurantNotificationChatID
+	msg := tgbotapi.NewMessage(chatID, normalizeTelegramText(formatRestaurantCouponRedemptionMessage(result)))
+	msg.ParseMode = tgbotapi.ModeHTML
+	sent, err := s.botAPI.Send(msg)
+	if s.store != nil {
+		record := store.RecordRestaurantRedemptionNotificationParams{
+			CouponRedemptionID: result.Preview.Redemption.ID,
+			ChatID:             chatID,
+		}
+		if err != nil {
+			record.Error = err.Error()
+		} else {
+			record.MessageID = int64(sent.MessageID)
+		}
+		if recordErr := s.store.RecordRestaurantRedemptionNotification(ctx, record); recordErr != nil {
+			s.logger.WarnContext(ctx, "failed to record restaurant redemption notification",
+				"error", recordErr,
+				"coupon_redemption_id", result.Preview.Redemption.ID,
+				"restaurant_telegram_chat_id", chatID,
+			)
+		}
 	}
-	if strings.TrimSpace(result.MerchantName) != "" {
-		lines = append(lines, "Merchant: "+html.EscapeString(result.MerchantName))
+	if err != nil {
+		s.logger.Error("failed to notify restaurant redemption chat",
+			"error", err,
+			"coupon_redemption_id", result.Preview.Redemption.ID,
+			"restaurant_telegram_chat_id", chatID,
+		)
 	}
-	if strings.TrimSpace(result.OfferTitle) != "" {
-		lines = append(lines, "Coupon: "+html.EscapeString(result.OfferTitle))
+	return err
+}
+
+func formatRestaurantCouponRedemptionMessage(result store.CouponRedemptionConfirmResult) string {
+	preview := result.Preview
+	lines := []string{"<b>✅ קופון מומש בהצלחה</b>"}
+	if strings.TrimSpace(preview.OrderNumber) != "" {
+		lines = append(lines, "מספר הזמנה: "+html.EscapeString(preview.OrderNumber))
 	}
-	lines = append(lines, "Status: "+html.EscapeString(result.Redemption.Status))
-	if result.Redemption.ScannedAt != nil {
-		lines = append(lines, "Scanned at: "+html.EscapeString(result.Redemption.ScannedAt.Local().Format("15:04 02/01/2006")))
+	if strings.TrimSpace(preview.MerchantName) != "" {
+		lines = append(lines, "בית עסק: "+html.EscapeString(preview.MerchantName))
 	}
-	if strings.TrimSpace(result.BuyerDisplay) != "" {
-		lines = append(lines, "Buyer: "+html.EscapeString(result.BuyerDisplay))
+	if strings.TrimSpace(preview.OfferTitle) != "" {
+		lines = append(lines, "קופון: "+html.EscapeString(preview.OfferTitle))
 	}
-	if result.BuyerTelegramID != 0 {
-		lines = append(lines, fmt.Sprintf("Buyer Telegram ID: <code>%d</code>", result.BuyerTelegramID))
+	lines = append(lines, "סכום ששולם: "+html.EscapeString(formatPrice(preview.AmountPaid)))
+	lines = append(lines, "סטטוס תשלום: "+html.EscapeString(preview.PaymentStatusSummary))
+	if preview.Redemption.RedeemedAt != nil {
+		lines = append(lines, "שעת מימוש: "+html.EscapeString(preview.Redemption.RedeemedAt.Local().Format("15:04 02/01/2006")))
 	}
+	lines = append(lines, "המימוש נרשם במערכת KuponFast.")
 	return strings.Join(lines, "\n")
 }
 

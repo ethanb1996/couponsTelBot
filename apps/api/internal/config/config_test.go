@@ -131,11 +131,8 @@ func TestLoadAppliesExplicitDatabaseSettings(t *testing.T) {
 	t.Setenv("OPS_RECONCILE_AFTER", "3m")
 	t.Setenv("OPS_CHECKOUT_HOLD_DURATION", "11m")
 	t.Setenv("OPS_BATCH_SIZE", "15")
-	t.Setenv("SMTP_HOST", "smtp.example.com")
-	t.Setenv("SMTP_PORT", "2525")
-	t.Setenv("SMTP_USERNAME", "mailer")
-	t.Setenv("SMTP_PASSWORD", "secret")
-	t.Setenv("SMTP_FROM", "noreply@example.com")
+	t.Setenv("RESEND_API_KEY", "re_real")
+	t.Setenv("RESEND_FROM", "noreply@example.com")
 	t.Setenv("TELEGRAM_BOT_TOKEN", "bot-token")
 	t.Setenv("TELEGRAM_WEBHOOK_SECRET", "telegram-secret")
 	t.Setenv("TELEGRAM_ADMIN_USER_IDS", "111, 222")
@@ -200,8 +197,8 @@ func TestLoadAppliesExplicitDatabaseSettings(t *testing.T) {
 		t.Fatalf("expected explicit OPS_BATCH_SIZE, got %d", cfg.OpsBatchSize)
 	}
 
-	if cfg.SMTPHost != "smtp.example.com" || cfg.SMTPPort != 2525 || cfg.SMTPUsername != "mailer" || cfg.SMTPPassword != "secret" || cfg.SMTPFrom != "noreply@example.com" {
-		t.Fatalf("unexpected smtp config: %#v", cfg)
+	if cfg.ResendAPIKey != "re_real" || cfg.ResendFrom != "noreply@example.com" {
+		t.Fatalf("unexpected resend config: %#v", cfg)
 	}
 
 	if len(cfg.TelegramAdminUserIDs) != 2 || cfg.TelegramAdminUserIDs[0] != 111 || cfg.TelegramAdminUserIDs[1] != 222 {
@@ -233,6 +230,24 @@ func TestLoadParsesTelegramAdminReviewChatID(t *testing.T) {
 	}
 	if cfg.TelegramAdminReviewChatID != 12345 {
 		t.Fatalf("expected positive review chat id, got %d", cfg.TelegramAdminReviewChatID)
+	}
+}
+
+func TestLoadParsesTelegramRestaurantRedemptionChatID(t *testing.T) {
+	t.Setenv("DATABASE_URL", "postgres://example")
+	t.Setenv("TELEGRAM_BOT_TOKEN", "bot-token")
+	t.Setenv("TELEGRAM_WEBHOOK_SECRET", "telegram-secret")
+	t.Setenv("TELEGRAM_RESTAURANT_REDEMPTION_CHAT_ID", "-100222333444")
+	t.Setenv("ADMIN_BASIC_AUTH_USER", "admin")
+	t.Setenv("ADMIN_BASIC_AUTH_PASS", "password")
+	t.Setenv("COUPON_ENCRYPTION_KEY", strings.Repeat("a", 32))
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("expected config load to succeed: %v", err)
+	}
+	if cfg.TelegramRestaurantRedemptionChatID != -100222333444 {
+		t.Fatalf("expected restaurant redemption chat id, got %d", cfg.TelegramRestaurantRedemptionChatID)
 	}
 }
 
@@ -301,38 +316,49 @@ func TestLoadRejectsInvalidTelegramAdminReviewChatID(t *testing.T) {
 	}
 }
 
-func TestLoadRejectsIncompleteSMTPSettings(t *testing.T) {
+func TestLoadRejectsIncompleteResendSettings(t *testing.T) {
 	t.Setenv("DATABASE_URL", "postgres://example")
 	t.Setenv("TELEGRAM_BOT_TOKEN", "bot-token")
 	t.Setenv("TELEGRAM_WEBHOOK_SECRET", "telegram-secret")
 	t.Setenv("ADMIN_BASIC_AUTH_USER", "admin")
 	t.Setenv("ADMIN_BASIC_AUTH_PASS", "password")
 	t.Setenv("COUPON_ENCRYPTION_KEY", strings.Repeat("a", 32))
-	t.Setenv("SMTP_HOST", "smtp.example.com")
+	t.Setenv("RESEND_API_KEY", "re_real")
 
 	_, err := Load()
 	if err == nil {
 		t.Fatal("expected config load to fail")
 	}
-	if got := err.Error(); got != "SMTP_FROM is required when SMTP_HOST is set" {
+	if got := err.Error(); got != "RESEND_FROM is required when RESEND_API_KEY is set" {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	t.Setenv("RESEND_API_KEY", "")
+	t.Setenv("RESEND_FROM", "noreply@example.com")
+	_, err = Load()
+	if err == nil {
+		t.Fatal("expected config load to fail")
+	}
+	if got := err.Error(); got != "RESEND_API_KEY is required when RESEND_FROM is set" {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
-func TestLoadRejectsInvalidSMTPPort(t *testing.T) {
+func TestLoadRejectsSampleResendAPIKey(t *testing.T) {
 	t.Setenv("DATABASE_URL", "postgres://example")
 	t.Setenv("TELEGRAM_BOT_TOKEN", "bot-token")
 	t.Setenv("TELEGRAM_WEBHOOK_SECRET", "telegram-secret")
 	t.Setenv("ADMIN_BASIC_AUTH_USER", "admin")
 	t.Setenv("ADMIN_BASIC_AUTH_PASS", "password")
 	t.Setenv("COUPON_ENCRYPTION_KEY", strings.Repeat("a", 32))
-	t.Setenv("SMTP_PORT", "0")
+	t.Setenv("RESEND_API_KEY", "re_xxxxxxxxx")
+	t.Setenv("RESEND_FROM", "noreply@example.com")
 
 	_, err := Load()
 	if err == nil {
 		t.Fatal("expected config load to fail")
 	}
-	if got := err.Error(); got != "SMTP_PORT must be greater than zero" {
+	if got := err.Error(); got != "RESEND_API_KEY is still the sample placeholder; replace re_xxxxxxxxx with your real Resend API key" {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
@@ -413,9 +439,12 @@ func TestLoadReadsDotEnvFromCurrentWorkingDirectory(t *testing.T) {
 		"OPS_RECONCILE_AFTER",
 		"OPS_CHECKOUT_HOLD_DURATION",
 		"OPS_BATCH_SIZE",
+		"RESEND_API_KEY",
+		"RESEND_FROM",
 		"TELEGRAM_BOT_TOKEN",
 		"TELEGRAM_WEBHOOK_SECRET",
 		"TELEGRAM_ADMIN_USER_IDS",
+		"TELEGRAM_RESTAURANT_REDEMPTION_CHAT_ID",
 		"ADMIN_BASIC_AUTH_USER",
 		"ADMIN_BASIC_AUTH_PASS",
 		"COUPON_ENCRYPTION_KEY",

@@ -309,28 +309,31 @@ func TestFormatAdminPaymentClaimMessageIncludesBuyerChatID(t *testing.T) {
 	}
 }
 
-func TestFormatAdminCouponRedemptionMessage(t *testing.T) {
-	scannedAt := time.Date(2026, 6, 9, 18, 15, 0, 0, time.UTC)
-	message := formatAdminCouponRedemptionMessage(store.CouponRedemptionScanResult{
-		FirstScan:       true,
-		OrderNumber:     "PB-20260609180338",
-		MerchantName:    "הרובע י״ב",
-		OfferTitle:      "פיצה משפחתית + תוספת",
-		BuyerDisplay:    "Buyer One",
-		BuyerTelegramID: 1111,
-		Redemption: store.CouponRedemption{
-			Status:    "redeemed",
-			ScannedAt: &scannedAt,
+func TestFormatAdminCouponRedemptionConfirmMessage(t *testing.T) {
+	redeemedAt := time.Date(2026, 6, 9, 18, 15, 0, 0, time.UTC)
+	restaurantChatID := int64(-1001234567890)
+	message := formatAdminCouponRedemptionMessage(store.CouponRedemptionConfirmResult{
+		FirstRedeem:                  true,
+		RestaurantNotificationChatID: &restaurantChatID,
+		Preview: store.CouponRedemptionPreview{
+			OrderNumber:          "PB-20260609180338",
+			MerchantName:         "הרובע י\"ב",
+			OfferTitle:           "פיצה משפחתית + תוספת",
+			AmountPaid:           5900,
+			PaymentStatusSummary: "אושר במערכת KuponFast",
+			BuyerDisplay:         "Buyer One",
+			BuyerTelegramID:      1111,
+			Redemption:           store.CouponRedemption{Status: "redeemed", RedeemedAt: &redeemedAt},
 		},
 	})
 
 	for _, want := range []string{
-		"<b>קופון מומש בהצלחה</b>",
-		"Order: PB-20260609180338",
-		"Merchant: הרובע י״ב",
-		"Coupon: פיצה משפחתית + תוספת",
-		"Status: redeemed",
-		"Buyer Telegram ID: <code>1111</code>",
+		"מימוש קופון",
+		"PB-20260609180338",
+		"הרובע י&#34;ב",
+		"פיצה משפחתית + תוספת",
+		"אושר במערכת KuponFast",
+		"Telegram ID: <code>1111</code>",
 	} {
 		if !strings.Contains(message, want) {
 			t.Fatalf("expected redemption message to contain %q, got %q", want, message)
@@ -338,18 +341,48 @@ func TestFormatAdminCouponRedemptionMessage(t *testing.T) {
 	}
 }
 
-func TestFormatAdminCouponRedemptionMessageForRepeatScan(t *testing.T) {
-	message := formatAdminCouponRedemptionMessage(store.CouponRedemptionScanResult{
-		FirstScan:   false,
-		OrderNumber: "PB-20260609180338",
-		Redemption:  store.CouponRedemption{Status: "redeemed"},
+func TestFormatAdminCouponRedemptionConfirmMessageForRepeat(t *testing.T) {
+	redeemedAt := time.Date(2026, 6, 9, 18, 15, 0, 0, time.UTC)
+	message := formatAdminCouponRedemptionMessage(store.CouponRedemptionConfirmResult{
+		FirstRedeem: false,
+		Preview: store.CouponRedemptionPreview{
+			OrderNumber: "PB-20260609180338",
+			Redemption:  store.CouponRedemption{Status: "redeemed", RedeemedAt: &redeemedAt},
+		},
 	})
 
-	if !strings.Contains(message, "<b>נסיון סריקה חוזרת</b>") {
-		t.Fatalf("expected repeat-scan title, got %q", message)
+	if !strings.Contains(message, "ניסיון מימוש חוזר") {
+		t.Fatalf("expected repeat redeem title, got %q", message)
 	}
-	if strings.Contains(message, "Buyer Telegram ID") {
+	if strings.Contains(message, "Telegram ID") {
 		t.Fatalf("did not expect missing buyer id line, got %q", message)
+	}
+}
+
+func TestFormatRestaurantCouponRedemptionMessage(t *testing.T) {
+	redeemedAt := time.Date(2026, 6, 9, 18, 15, 0, 0, time.UTC)
+	message := formatRestaurantCouponRedemptionMessage(store.CouponRedemptionConfirmResult{
+		FirstRedeem: true,
+		Preview: store.CouponRedemptionPreview{
+			OrderNumber:          "PB-20260609180338",
+			MerchantName:         "הרובע י\"ב",
+			OfferTitle:           "פיצה משפחתית + תוספת",
+			AmountPaid:           5900,
+			PaymentStatusSummary: "אושר במערכת KuponFast",
+			Redemption:           store.CouponRedemption{Status: "redeemed", RedeemedAt: &redeemedAt},
+		},
+	})
+
+	for _, want := range []string{
+		"קופון מומש בהצלחה",
+		"PB-20260609180338",
+		"סכום ששולם",
+		"אושר במערכת KuponFast",
+		"המימוש נרשם במערכת KuponFast",
+	} {
+		if !strings.Contains(message, want) {
+			t.Fatalf("expected restaurant message to contain %q, got %q", want, message)
+		}
 	}
 }
 

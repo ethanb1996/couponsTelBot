@@ -14,62 +14,9 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-func TestRedemptionScanByTokenGetRendersSuccessHTMLAndNotifies(t *testing.T) {
-	scannedAt := time.Date(2026, 6, 9, 18, 15, 0, 0, time.UTC)
-	recorder := &stubRedemptionRecorder{result: store.CouponRedemptionScanResult{
-		FirstScan:       true,
-		OrderNumber:     "PB-20260609180338",
-		MerchantName:    "הרובע י״ב",
-		OfferTitle:      "פיצה משפחתית + תוספת",
-		BuyerDisplay:    "Buyer One",
-		BuyerTelegramID: 1111,
-		Redemption: store.CouponRedemption{
-			ID:                1,
-			OrderID:           501,
-			PredefinedCodeID:  7001,
-			RedemptionToken:   "token-1",
-			Status:            "redeemed",
-			MerchantReference: "branch-1",
-			ScannerReference:  "scanner-1",
-			ScannedAt:         &scannedAt,
-		},
-	}}
-	notifier := &stubRedemptionNotifier{}
-	handler := redemptionScanByTokenHandler(recorder, notifier)
-
-	req := httptest.NewRequest(http.MethodGet, "/api/redemptions/scan/token-1?merchant_reference=branch-1&scanner_reference=scanner-1", nil)
-	rec := httptest.NewRecorder()
-
-	handler(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
-	}
-	if got := rec.Header().Get("Content-Type"); !strings.Contains(got, "text/html") {
-		t.Fatalf("expected html response, got %q", got)
-	}
-	if body := rec.Body.String(); !strings.Contains(body, "הקופון מומש בהצלחה") || !strings.Contains(body, "PB-20260609180338") {
-		t.Fatalf("expected success html with order number, got %q", body)
-	}
-	if recorder.params.RedemptionToken != "token-1" || recorder.params.MerchantReference != "branch-1" || recorder.params.ScannerReference != "scanner-1" {
-		t.Fatalf("unexpected recorder params: %+v", recorder.params)
-	}
-	if len(notifier.results) != 1 || !notifier.results[0].FirstScan {
-		t.Fatalf("expected first-scan notification, got %+v", notifier.results)
-	}
-}
-
-func TestRedemptionScanByTokenGetRendersRepeatHTMLAndNotifies(t *testing.T) {
-	recorder := &stubRedemptionRecorder{result: store.CouponRedemptionScanResult{
-		FirstScan:   false,
-		OrderNumber: "PB-20260609180338",
-		Redemption: store.CouponRedemption{
-			RedemptionToken: "token-1",
-			Status:          "redeemed",
-		},
-	}}
-	notifier := &stubRedemptionNotifier{}
-	handler := redemptionScanByTokenHandler(recorder, notifier)
+func TestRedemptionScanByTokenGetRendersPreviewHTMLWithoutRedeeming(t *testing.T) {
+	repo := &stubRedemptionStore{preview: validPreview("issued")}
+	handler := redemptionScanByTokenHandler(repo)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/redemptions/scan/token-1", nil)
 	rec := httptest.NewRecorder()
@@ -79,18 +26,43 @@ func TestRedemptionScanByTokenGetRendersRepeatHTMLAndNotifies(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), "הקופון כבר מומש") {
-		t.Fatalf("expected already redeemed html, got %q", rec.Body.String())
+	body := rec.Body.String()
+	for _, want := range []string{"בדיקת קופון", "PB-20260609180338", "ממש קופון"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("expected preview html to contain %q, got %q", want, body)
+		}
 	}
-	if len(notifier.results) != 1 || notifier.results[0].FirstScan {
-		t.Fatalf("expected repeat-scan notification, got %+v", notifier.results)
+	if repo.previewToken != "token-1" {
+		t.Fatalf("unexpected preview token %q", repo.previewToken)
+	}
+	if repo.confirmCalled {
+		t.Fatal("GET preview must not confirm redemption")
+	}
+}
+
+func TestRedemptionScanByTokenGetRendersAlreadyRedeemedHTML(t *testing.T) {
+	redeemedAt := time.Date(2026, 6, 11, 18, 15, 0, 0, time.UTC)
+	preview := validPreview("redeemed")
+	preview.Redemption.RedeemedAt = &redeemedAt
+	repo := &stubRedemptionStore{preview: preview}
+	handler := redemptionScanByTokenHandler(repo)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/redemptions/scan/token-1", nil)
+	rec := httptest.NewRecorder()
+
+	handler(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if body := rec.Body.String(); !strings.Contains(body, "הקופון כבר מומש") || strings.Contains(body, "ממש קופון") {
+		t.Fatalf("expected already-redeemed html without redeem button, got %q", body)
 	}
 }
 
 func TestRedemptionScanByTokenGetRendersInvalidHTML(t *testing.T) {
-	recorder := &stubRedemptionRecorder{err: pgx.ErrNoRows}
-	notifier := &stubRedemptionNotifier{}
-	handler := redemptionScanByTokenHandler(recorder, notifier)
+	repo := &stubRedemptionStore{previewErr: pgx.ErrNoRows}
+	handler := redemptionScanByTokenHandler(repo)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/redemptions/scan/bad-token", nil)
 	rec := httptest.NewRecorder()
@@ -103,28 +75,15 @@ func TestRedemptionScanByTokenGetRendersInvalidHTML(t *testing.T) {
 	if !strings.Contains(rec.Body.String(), "קוד לא תקין") {
 		t.Fatalf("expected invalid html, got %q", rec.Body.String())
 	}
-	if len(notifier.results) != 0 {
-		t.Fatalf("did not expect invalid-token notification, got %+v", notifier.results)
-	}
 }
 
-func TestRedemptionScanPostKeepsJSONResponse(t *testing.T) {
-	scannedAt := time.Date(2026, 6, 9, 18, 15, 0, 0, time.UTC)
-	recorder := &stubRedemptionRecorder{result: store.CouponRedemptionScanResult{
-		FirstScan:   true,
-		OrderNumber: "PB-1",
-		Redemption: store.CouponRedemption{
-			OrderID:           501,
-			PredefinedCodeID:  7001,
-			RedemptionToken:   "token-1",
-			Status:            "redeemed",
-			MerchantReference: "branch-1",
-			ScannedAt:         &scannedAt,
-		},
-	}}
-	handler := redemptionScanHandler(recorder, nil)
+func TestRedemptionRedeemByTokenPostRendersSuccessAndNotifies(t *testing.T) {
+	result := validConfirmResult(true)
+	repo := &stubRedemptionStore{confirm: result}
+	notifier := &stubRedemptionNotifier{}
+	handler := redemptionRedeemByTokenHandler(repo, notifier, -100123)
 
-	req := httptest.NewRequest(http.MethodPost, "/api/redemptions/scan", strings.NewReader(`{"redemption_token":"token-1","merchant_reference":"branch-1"}`))
+	req := httptest.NewRequest(http.MethodPost, "/api/redemptions/redeem/token-1", nil)
 	rec := httptest.NewRecorder()
 
 	handler(rec, req)
@@ -132,39 +91,116 @@ func TestRedemptionScanPostKeepsJSONResponse(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
-	if got := rec.Header().Get("Content-Type"); !strings.Contains(got, "application/json") {
-		t.Fatalf("expected json response, got %q", got)
+	if body := rec.Body.String(); !strings.Contains(body, "קופון מומש בהצלחה") || !strings.Contains(body, "PB-20260609180338") {
+		t.Fatalf("expected success html, got %q", body)
 	}
+	if repo.confirmParams.RedemptionToken != "token-1" || repo.confirmParams.RestaurantNotificationFallbackChatID != -100123 {
+		t.Fatalf("unexpected confirm params: %+v", repo.confirmParams)
+	}
+	if len(notifier.results) != 1 || !notifier.results[0].FirstRedeem {
+		t.Fatalf("expected first redeem notification, got %+v", notifier.results)
+	}
+}
 
+func TestRedemptionRedeemByTokenPostRendersRepeatHTML(t *testing.T) {
+	repo := &stubRedemptionStore{confirm: validConfirmResult(false)}
+	handler := redemptionRedeemByTokenHandler(repo, nil, 0)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/redemptions/redeem/token-1", nil)
+	rec := httptest.NewRecorder()
+
+	handler(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "הקופון כבר מומש") {
+		t.Fatalf("expected already redeemed html, got %q", rec.Body.String())
+	}
+}
+
+func TestRedemptionRedeemJSONReturnsConfirmPayload(t *testing.T) {
+	repo := &stubRedemptionStore{confirm: validConfirmResult(true)}
+	handler := redemptionRedeemHandler(repo, nil, -100123)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/redemptions/redeem", strings.NewReader(`{"redemption_token":"token-1","merchant_reference":"branch-1"}`))
+	rec := httptest.NewRecorder()
+
+	handler(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
 	var payload map[string]any
 	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
 		t.Fatalf("decode json response: %v", err)
 	}
-	if payload["status"] != "redeemed" || payload["first_scan"] != true || payload["order_number"] != "PB-1" {
+	if payload["status"] != "redeemed" || payload["first_redeem"] != true || payload["order_number"] != "PB-20260609180338" {
 		t.Fatalf("unexpected json payload: %+v", payload)
 	}
 }
 
-type stubRedemptionRecorder struct {
-	params store.RecordCouponRedemptionScanParams
-	result store.CouponRedemptionScanResult
-	err    error
+func TestRedemptionScanPostNoLongerRedeems(t *testing.T) {
+	handler := redemptionScanHandler()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/redemptions/scan", strings.NewReader(`{"redemption_token":"token-1"}`))
+	rec := httptest.NewRecorder()
+
+	handler(rec, req)
+
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("expected 405, got %d: %s", rec.Code, rec.Body.String())
+	}
 }
 
-func (s *stubRedemptionRecorder) RecordCouponRedemptionScan(ctx context.Context, params store.RecordCouponRedemptionScanParams) (store.CouponRedemptionScanResult, error) {
-	s.params = params
-	if s.err != nil {
-		return store.CouponRedemptionScanResult{}, s.err
+func TestRedemptionNotifierErrorsDoNotFailRedeemResponse(t *testing.T) {
+	repo := &stubRedemptionStore{confirm: validConfirmResult(true)}
+	notifier := &stubRedemptionNotifier{err: errors.New("telegram down")}
+	handler := redemptionRedeemByTokenHandler(repo, notifier, 0)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/redemptions/redeem/token-1", nil)
+	rec := httptest.NewRecorder()
+
+	handler(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected notifier failure not to fail redeem, got %d: %s", rec.Code, rec.Body.String())
 	}
-	return s.result, nil
+}
+
+type stubRedemptionStore struct {
+	preview       store.CouponRedemptionPreview
+	previewToken  string
+	previewErr    error
+	confirm       store.CouponRedemptionConfirmResult
+	confirmParams store.ConfirmCouponRedemptionParams
+	confirmCalled bool
+	confirmErr    error
+}
+
+func (s *stubRedemptionStore) GetCouponRedemptionPreview(ctx context.Context, token string) (store.CouponRedemptionPreview, error) {
+	s.previewToken = token
+	if s.previewErr != nil {
+		return store.CouponRedemptionPreview{}, s.previewErr
+	}
+	return s.preview, nil
+}
+
+func (s *stubRedemptionStore) ConfirmCouponRedemption(ctx context.Context, params store.ConfirmCouponRedemptionParams) (store.CouponRedemptionConfirmResult, error) {
+	s.confirmCalled = true
+	s.confirmParams = params
+	if s.confirmErr != nil {
+		return store.CouponRedemptionConfirmResult{}, s.confirmErr
+	}
+	return s.confirm, nil
 }
 
 type stubRedemptionNotifier struct {
-	results []store.CouponRedemptionScanResult
+	results []store.CouponRedemptionConfirmResult
 	err     error
 }
 
-func (s *stubRedemptionNotifier) NotifyCouponRedeemed(ctx context.Context, result store.CouponRedemptionScanResult) error {
+func (s *stubRedemptionNotifier) NotifyCouponRedeemed(ctx context.Context, result store.CouponRedemptionConfirmResult) error {
 	s.results = append(s.results, result)
 	if s.err != nil {
 		return s.err
@@ -172,20 +208,36 @@ func (s *stubRedemptionNotifier) NotifyCouponRedeemed(ctx context.Context, resul
 	return nil
 }
 
-func TestRedemptionNotifierErrorsDoNotFailScanResponse(t *testing.T) {
-	recorder := &stubRedemptionRecorder{result: store.CouponRedemptionScanResult{
-		FirstScan:  true,
-		Redemption: store.CouponRedemption{RedemptionToken: "token-1", Status: "redeemed"},
-	}}
-	notifier := &stubRedemptionNotifier{err: errors.New("telegram down")}
-	handler := redemptionScanByTokenHandler(recorder, notifier)
+func validConfirmResult(first bool) store.CouponRedemptionConfirmResult {
+	chatID := int64(-1001234567890)
+	preview := validPreview("redeemed")
+	redeemedAt := time.Date(2026, 6, 11, 18, 15, 0, 0, time.UTC)
+	preview.Redemption.RedeemedAt = &redeemedAt
+	return store.CouponRedemptionConfirmResult{
+		Preview:                      preview,
+		FirstRedeem:                  first,
+		RestaurantNotificationChatID: &chatID,
+	}
+}
 
-	req := httptest.NewRequest(http.MethodGet, "/api/redemptions/scan/token-1", nil)
-	rec := httptest.NewRecorder()
-
-	handler(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected notifier failure not to fail scan, got %d: %s", rec.Code, rec.Body.String())
+func validPreview(status string) store.CouponRedemptionPreview {
+	approvedAt := time.Date(2026, 6, 11, 17, 30, 0, 0, time.UTC)
+	return store.CouponRedemptionPreview{
+		Redemption: store.CouponRedemption{
+			ID:               1,
+			OrderID:          501,
+			PredefinedCodeID: 7001,
+			RedemptionToken:  "token-1",
+			Status:           status,
+		},
+		OrderNumber:          "PB-20260609180338",
+		MerchantName:         "הרובע י\"ב",
+		OfferTitle:           "פיצה משפחתית + תוספת",
+		AmountPaid:           5900,
+		CurrencyCode:         "ILS",
+		PaymentStatusSummary: "אושר במערכת KuponFast",
+		ApprovalTime:         &approvedAt,
+		BuyerDisplay:         "ישראל ישראלי",
+		RedemptionTerms:      "להציג את הקופון בקופה.",
 	}
 }

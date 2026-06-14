@@ -71,47 +71,47 @@ For a group or supergroup, add the bot to the chat so it can post messages. If t
 1. Buyer shows the delivered QR to the merchant.
 2. Merchant scans the QR.
 3. Browser opens `GET /api/redemptions/scan/{token}`.
-4. Backend records the scan:
-   - first valid scan changes the redemption from `issued` to `redeemed`
-   - repeat scans do not re-redeem the coupon or rewrite the original scan time
+4. Backend records first visibility and shows a Hebrew coupon review page without redeeming.
+5. Merchant checks the details and submits `POST /api/redemptions/redeem/{token}`.
+6. Backend records redemption exactly once:
+   - first valid redeem changes the redemption from `issued` to `redeemed`
+   - repeat redeems do not rewrite the original redemption time
    - invalid tokens show an invalid-code page
-5. Merchant sees a simple Hebrew HTML result page:
-   - first scan: coupon accepted
-   - repeat scan: coupon already redeemed
+7. Merchant sees a Hebrew HTML result page:
+   - first redeem: coupon accepted
+   - repeat redeem: coupon already redeemed
    - invalid token: invalid code
-6. The admin review chat is notified for both first scans and repeat scans.
-7. No automatic customer Telegram message is sent on redemption.
+8. The admin review chat is notified for first redeems and repeat redeem attempts.
+9. The configured restaurant Telegram chat/channel is notified on first redeem.
+10. No automatic customer Telegram message is sent on redemption.
 
-`POST /api/redemptions/scan` remains JSON-friendly for API-style scans.
+`POST /api/redemptions/redeem` is the JSON-friendly endpoint for API-style redemption.
 
 ## Merchant Email After Redemption
 
 On first successful QR redemption, the backend can send the merchant a confirmation email with the order and coupon details.
 
-Email is optional and controlled by SMTP config:
+Email is optional and controlled by Resend config:
 
 ```env
-SMTP_HOST=smtp-relay.brevo.com
-SMTP_PORT=587
-SMTP_USERNAME=your-smtp-user
-SMTP_PASSWORD=your-smtp-key
-SMTP_FROM=your-verified-sender@example.com
+RESEND_API_KEY=re_xxxxxxxxx
+RESEND_FROM=onboarding@resend.dev
 ```
 
-The merchant email address is read from `merchant_partners.contact_reference` when it contains a valid email address. Repeat scans do not send another merchant email. Email delivery failure is logged but does not roll back the redemption.
+Replace `re_xxxxxxxxx` with your real Resend API key before enabling email. For production, use a verified sender/domain in `RESEND_FROM`.
 
-For the pilot, Brevo is the preferred free provider because the current implementation already uses SMTP and Brevo offers a free daily sending allowance.
+The merchant email address is read from `merchant_partners.contact_reference` when it contains a valid email address. Repeat redeems do not send another merchant email. Email delivery failure is logged but does not roll back the redemption.
 
 ## Main Data Tables
 
 - `users`: Telegram buyer identity and destination chat id.
-- `merchant_partners`: merchant details, support contact, default PayBox link, optional email in `contact_reference`.
+- `merchant_partners`: merchant details, support contact, default PayBox link, optional email in `contact_reference`, and optional restaurant Telegram redemption destination.
 - `offers`: Telegram-facing coupon offer and PayBox link.
 - `predefined_codes`: code inventory assigned after approval.
 - `orders`: buyer order state and PayBox link snapshot.
 - `manual_payment_claims`: uploaded PayBox screenshot review requests.
 - `coupon_deliveries`: QR/code delivery attempts to buyers.
-- `coupon_redemptions`: QR token state and scan metadata.
+- `coupon_redemptions`: QR token state, first view, redeem metadata, and restaurant notification status.
 - `admin_actions`: approval/rejection audit trail.
 
 ## Verification
