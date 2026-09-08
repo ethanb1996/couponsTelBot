@@ -62,11 +62,26 @@ func TestCatalogPersists(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "offers.json")
 	catalog, _ := NewCatalog(path)
 	_, _, _ = catalog.Add("Persisted offer", 3, time.Now())
+	if err := catalog.SetMenuMessageID(99); err != nil {
+		t.Fatal(err)
+	}
 	reloaded, err := NewCatalog(path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(reloaded.List()) != 1 || reloaded.List()[0].Title != "Persisted offer" {
 		t.Fatalf("unexpected reloaded catalog: %#v", reloaded.List())
+	}
+	if reloaded.MenuMessageID() != 99 {
+		t.Fatalf("expected persisted menu message id, got %d", reloaded.MenuMessageID())
+	}
+}
+
+func TestParseOfferStartPayload(t *testing.T) {
+	if id, ok := parseOfferStartPayload("offer_abc123"); !ok || id != "abc123" {
+		t.Fatalf("unexpected payload parse: id=%q ok=%v", id, ok)
+	}
+	if _, ok := parseOfferStartPayload("other_abc123"); ok {
+		t.Fatal("expected unrelated payload to be rejected")
 	}
 }

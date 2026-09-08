@@ -28,9 +28,15 @@ type Offer struct {
 }
 
 type Catalog struct {
-	mu     sync.RWMutex
-	path   string
-	offers []Offer
+	mu            sync.RWMutex
+	path          string
+	offers        []Offer
+	menuMessageID int
+}
+
+type catalogFile struct {
+	Offers        []Offer `json:"offers"`
+	MenuMessageID int     `json:"menu_message_id,omitempty"`
 }
 
 func NewCatalog(path string) (*Catalog, error) {
@@ -43,7 +49,11 @@ func NewCatalog(path string) (*Catalog, error) {
 		return nil, err
 	}
 	if len(data) > 0 {
-		if err := json.Unmarshal(data, &c.offers); err != nil {
+		var state catalogFile
+		if err := json.Unmarshal(data, &state); err == nil && state.Offers != nil {
+			c.offers = state.Offers
+			c.menuMessageID = state.MenuMessageID
+		} else if err := json.Unmarshal(data, &c.offers); err != nil {
 			return nil, err
 		}
 	}
@@ -100,11 +110,27 @@ func (c *Catalog) Get(id string) (Offer, bool) {
 	return Offer{}, false
 }
 
+func (c *Catalog) MenuMessageID() int {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.menuMessageID
+}
+
+func (c *Catalog) SetMenuMessageID(messageID int) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.menuMessageID = messageID
+	return c.saveLocked()
+}
+
 func (c *Catalog) saveLocked() error {
 	if err := os.MkdirAll(filepath.Dir(c.path), 0o755); err != nil {
 		return err
 	}
-	data, err := json.MarshalIndent(c.offers, "", "  ")
+	data, err := json.MarshalIndent(catalogFile{
+		Offers:        c.offers,
+		MenuMessageID: c.menuMessageID,
+	}, "", "  ")
 	if err != nil {
 		return err
 	}

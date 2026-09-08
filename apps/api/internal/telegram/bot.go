@@ -35,6 +35,9 @@ func NewBot(logger *slog.Logger, token string, channelID int64, adminIDs []int64
 	if _, err := api.Request(commands); err != nil {
 		logger.Warn("failed to set bot commands", "error", err)
 	}
+	if err := bot.syncChannelMenu(); err != nil {
+		logger.Warn("channel menu is not connected yet", "error", err, "channel_id", channelID)
+	}
 	return bot, nil
 }
 
@@ -50,7 +53,12 @@ func (b *Bot) HandleUpdate(ctx context.Context, update tgbotapi.Update) error {
 	}
 	if update.Message != nil && update.Message.IsCommand() {
 		switch update.Message.Command() {
-		case "start", "offers":
+		case "start":
+			if offerID, ok := parseOfferStartPayload(update.Message.CommandArguments()); ok {
+				return b.sendInterest(update.Message.Chat.ID, offerID, update.Message.From)
+			}
+			return b.sendMenu(update.Message.Chat.ID)
+		case "offers":
 			return b.sendMenu(update.Message.Chat.ID)
 		}
 	}
@@ -59,6 +67,9 @@ func (b *Bot) HandleUpdate(ctx context.Context, update tgbotapi.Update) error {
 
 func (b *Bot) captureChannelPost(message *tgbotapi.Message) error {
 	if message == nil || message.Chat == nil || int64(message.Chat.ID) != b.channel {
+		return nil
+	}
+	if message.MessageID == b.catalog.MenuMessageID() {
 		return nil
 	}
 	text := strings.TrimSpace(message.Text)
@@ -73,10 +84,11 @@ func (b *Bot) captureChannelPost(message *tgbotapi.Message) error {
 		published = time.Now()
 	}
 	offer, duplicate, err := b.catalog.Add(text, message.MessageID, published)
-	if err == nil {
-		b.logger.Info("captured channel offer", "offer_id", offer.ID, "title", offer.Title, "duplicate_refreshed", duplicate)
+	if err != nil {
+		return err
 	}
-	return err
+	b.logger.Info("captured channel offer", "offer_id", offer.ID, "title", offer.Title, "duplicate_refreshed", duplicate)
+	return b.syncChannelMenu()
 }
 
 func (b *Bot) sendMenu(chatID int64) error {
@@ -103,19 +115,92 @@ func (b *Bot) handleCallback(ctx context.Context, callback *tgbotapi.CallbackQue
 		return nil
 	}
 	_, _ = b.api.Request(tgbotapi.NewCallback(callback.ID, "ההתעניינות נשלחה"))
-	offer, ok := b.catalog.Get(strings.TrimPrefix(callback.Data, offerCallbackPrefix))
+	return b.sendInterest(callback.Message.Chat.ID, strings.TrimPrefix(callback.Data, offerCallbackPrefix), callback.From)
+}
+
+func (b *Bot) sendInterest(chatID int64, offerID string, user *tgbotapi.User) error {
+	offer, ok := b.catalog.Get(offerID)
 	if !ok {
-		_, err := b.api.Send(tgbotapi.NewMessage(callback.Message.Chat.ID, "ההצעה כבר אינה בין שמונה ההצעות האחרונות. שלחו /offers לרשימה המעודכנת."))
+		_, err := b.api.Send(tgbotapi.NewMessage(chatID, "ההצעה כבר אינה בין שמונה ההצעות האחרונות. שלחו /offers לרשימה המעודכנת."))
 		return err
 	}
 
 	buyerText := fmt.Sprintf("<b>ההתעניינות נשלחה ✅</b>\n\nאני מעוניין/ת בקופון:\n<b>%s</b>\n\nנציג יחזור אליך כאן להשלמת הרכישה.", html.EscapeString(offer.Title))
-	message := tgbotapi.NewMessage(callback.Message.Chat.ID, buyerText)
+	message := tgbotapi.NewMessage(chatID, buyerText)
 	message.ParseMode = tgbotapi.ModeHTML
 	if _, err := b.api.Send(message); err != nil {
 		return err
 	}
-	return b.notifyAdmins(ctx, offer, callback.From)
+	return b.notifyAdmins(context.Background(), offer, user)
+}
+
+func (b *Bot) syncChannelMenu() error {
+	text, keyboard := b.channelMenu()
+	messageID := b.catalog.MenuMessageID()
+	if messageID != 0 {
+		edit := tgbotapi.NewEditMessageTextAndMarkup(b.channel, messageID, text, keyboard)
+		edit.ParseMode = tgbotapi.ModeHTML
+		if _, err := b.api.Request(edit); err == nil {
+			return b.pinChannelMenu(messageID)
+		}
+		if err := b.catalog.SetMenuMessageID(0); err != nil {
+			return err
+		}
+	}
+
+	message := tgbotapi.NewMessage(b.channel, text)
+	message.ParseMode = tgbotapi.ModeHTML
+	// Telegram rejects an empty inline keyboard (the zero-value markup is
+	// serialized as null). Publish the empty-state menu without reply markup;
+	// buttons are added as soon as the first offer is captured.
+	if len(keyboard.InlineKeyboard) > 0 {
+		message.ReplyMarkup = keyboard
+	}
+	sent, err := b.api.Send(message)
+	if err != nil {
+		return err
+	}
+	if err := b.catalog.SetMenuMessageID(sent.MessageID); err != nil {
+		return err
+	}
+	return b.pinChannelMenu(sent.MessageID)
+}
+
+func (b *Bot) channelMenu() (string, tgbotapi.InlineKeyboardMarkup) {
+	offers := b.catalog.List()
+	text := "<b>תפריט הקופונים</b>\n\nההצעות האחרונות יופיעו כאן."
+	rows := make([][]tgbotapi.InlineKeyboardButton, 0, len(offers))
+	if len(offers) > 0 {
+		text = "<b>8 ההצעות האחרונות</b>\n\nבחרו קופון ונחזור אליכם להשלמת הרכישה:"
+		for _, offer := range offers {
+			rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+				tgbotapi.NewInlineKeyboardButtonURL(offer.Title, b.offerDeepLink(offer.ID)),
+			))
+		}
+	}
+	return text, tgbotapi.NewInlineKeyboardMarkup(rows...)
+}
+
+func (b *Bot) offerDeepLink(offerID string) string {
+	return fmt.Sprintf("https://t.me/%s?start=offer_%s", b.api.Self.UserName, offerID)
+}
+
+func parseOfferStartPayload(payload string) (string, bool) {
+	payload = strings.TrimSpace(payload)
+	if !strings.HasPrefix(payload, "offer_") {
+		return "", false
+	}
+	offerID := strings.TrimPrefix(payload, "offer_")
+	return offerID, offerID != ""
+}
+
+func (b *Bot) pinChannelMenu(messageID int) error {
+	_, err := b.api.Request(tgbotapi.PinChatMessageConfig{
+		ChatID:              b.channel,
+		MessageID:           messageID,
+		DisableNotification: true,
+	})
+	return err
 }
 
 func (b *Bot) notifyAdmins(_ context.Context, offer Offer, user *tgbotapi.User) error {

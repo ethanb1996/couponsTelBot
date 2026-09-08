@@ -6,12 +6,12 @@
 PORT=8080
 TELEGRAM_BOT_TOKEN=
 TELEGRAM_WEBHOOK_SECRET=
-TELEGRAM_CHANNEL_ID=-4448924956
+TELEGRAM_CHANNEL_ID=-1004448924956
 TELEGRAM_ADMIN_USER_IDS=123456789
 OFFERS_FILE=data/offers.json
 ```
 
-The bot must be an administrator in the channel so Telegram sends it `channel_post` and `edited_channel_post` updates.
+The bot must be an administrator in the channel with permission to post, edit, and pin messages. It maintains one pinned menu message and updates its buttons after every new or edited offer post.
 
 ## Run
 
