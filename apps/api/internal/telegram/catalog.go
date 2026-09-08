@@ -19,6 +19,8 @@ const maxOffers = 8
 
 var urlPattern = regexp.MustCompile(`https?://[^\s<>()]+`)
 
+var offerIntroPattern = regexp.MustCompile(`(?i)^(?:קופון חדש ל[־-]?|קופון ל[־-]?|מבצע ב[־-]?|דיל ב[־-]?)\s*`)
+
 type Offer struct {
 	ID              string    `json:"id"`
 	Title           string    `json:"title"`
@@ -138,6 +140,7 @@ func (c *Catalog) saveLocked() error {
 }
 
 func offerKey(text string) string {
+	content := normalizedOfferContent(text)
 	if match := urlPattern.FindString(text); match != "" {
 		match = strings.TrimRight(match, ".,;:!?)]}")
 		if parsed, err := url.Parse(match); err == nil {
@@ -145,10 +148,79 @@ func offerKey(text string) string {
 			parsed.Fragment = ""
 			parsed.Host = strings.ToLower(parsed.Host)
 			parsed.Path = strings.TrimRight(parsed.Path, "/")
-			return "url:" + parsed.String()
+			return "url:" + parsed.String() + "|content:" + content
 		}
 	}
-	return "title:" + normalize(offerTitle(text))
+	return "content:" + content
+}
+
+func normalizedOfferContent(text string) string {
+	lines := offerLines(text)
+	if len(lines) > 2 {
+		lines = lines[:2]
+	}
+	return normalize(strings.Join(lines, " "))
+}
+
+func offerButtonLabel(text string) string {
+	lines := offerLines(text)
+	if len(lines) == 0 {
+		return "Coupon offer"
+	}
+	restaurant := cleanRestaurant(lines[0])
+	if restaurant == "" {
+		restaurant = strings.TrimSpace(lines[0])
+	}
+	if len(lines) == 1 {
+		return truncateRunesWithEllipsis(restaurant, 40)
+	}
+	essence := cleanOfferEssence(lines[1])
+	if essence == "" {
+		return truncateRunesWithEllipsis(restaurant, 40)
+	}
+	restaurant = truncateRunesWithEllipsis(restaurant, 18)
+	remaining := 40 - len([]rune(restaurant)) - len([]rune(" · "))
+	if remaining < 10 {
+		remaining = 10
+	}
+	return restaurant + " · " + truncateRunesWithEllipsis(essence, remaining)
+}
+
+func offerLines(text string) []string {
+	var lines []string
+	for _, line := range strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || urlPattern.MatchString(line) {
+			continue
+		}
+		lines = append(lines, line)
+	}
+	return lines
+}
+
+func cleanRestaurant(line string) string {
+	line = trimDecorations(line)
+	line = offerIntroPattern.ReplaceAllString(line, "")
+	return strings.TrimSpace(line)
+}
+
+func cleanOfferEssence(line string) string {
+	line = trimDecorations(line)
+	for _, separator := range []string{" — ", " - "} {
+		if before, _, ok := strings.Cut(line, separator); ok {
+			line = before
+			break
+		}
+	}
+	line = strings.TrimSpace(strings.TrimPrefix(line, "שובר בשווי "))
+	line = strings.TrimSpace(strings.TrimSuffix(line, "בלבד"))
+	return strings.TrimSpace(line)
+}
+
+func trimDecorations(value string) string {
+	return strings.TrimFunc(strings.TrimSpace(value), func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsNumber(r) && r != '%' && r != '₪'
+	})
 }
 
 func offerTitle(text string) string {
@@ -159,6 +231,17 @@ func offerTitle(text string) string {
 		}
 	}
 	return "Coupon offer"
+}
+
+func truncateRunesWithEllipsis(value string, max int) string {
+	if max <= 1 {
+		return truncateRunes(value, max)
+	}
+	runes := []rune(value)
+	if len(runes) <= max {
+		return value
+	}
+	return string(runes[:max-1]) + "…"
 }
 
 func normalize(value string) string {

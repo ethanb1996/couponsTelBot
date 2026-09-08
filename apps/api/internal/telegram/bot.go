@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
@@ -20,6 +21,7 @@ type Bot struct {
 	catalog  *Catalog
 	channel  int64
 	adminIDs []int64
+	menuMu   sync.Mutex
 }
 
 func NewBot(logger *slog.Logger, token string, channelID int64, adminIDs []int64, catalog *Catalog) (*Bot, error) {
@@ -100,10 +102,10 @@ func (b *Bot) sendMenu(chatID int64) error {
 	rows := make([][]tgbotapi.InlineKeyboardButton, 0, len(offers))
 	for _, offer := range offers {
 		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData(offer.Title, offerCallbackPrefix+offer.ID),
+			tgbotapi.NewInlineKeyboardButtonData(offerButtonLabel(offer.Text), offerCallbackPrefix+offer.ID),
 		))
 	}
-	message := tgbotapi.NewMessage(chatID, "<b>8 ההצעות האחרונות</b>\n\nבחרו קופון ונחזור אליכם להשלמת הרכישה:")
+	message := tgbotapi.NewMessage(chatID, fmt.Sprintf("<b>ההצעות האחרונות (%d)</b>\n\nבחרו קופון ונחזור אליכם להשלמת הרכישה:", len(offers)))
 	message.ParseMode = tgbotapi.ModeHTML
 	message.ReplyMarkup = tgbotapi.NewInlineKeyboardMarkup(rows...)
 	_, err := b.api.Send(message)
@@ -135,13 +137,20 @@ func (b *Bot) sendInterest(chatID int64, offerID string, user *tgbotapi.User) er
 }
 
 func (b *Bot) syncChannelMenu() error {
+	b.menuMu.Lock()
+	defer b.menuMu.Unlock()
+
 	text, keyboard := b.channelMenu()
 	messageID := b.catalog.MenuMessageID()
 	if messageID != 0 {
 		edit := tgbotapi.NewEditMessageTextAndMarkup(b.channel, messageID, text, keyboard)
 		edit.ParseMode = tgbotapi.ModeHTML
-		if _, err := b.api.Request(edit); err == nil {
+		_, err := b.api.Request(edit)
+		if err == nil || isMessageNotModified(err) {
 			return b.pinChannelMenu(messageID)
+		}
+		if !isMissingMenuMessage(err) {
+			return err
 		}
 		if err := b.catalog.SetMenuMessageID(0); err != nil {
 			return err
@@ -171,14 +180,28 @@ func (b *Bot) channelMenu() (string, tgbotapi.InlineKeyboardMarkup) {
 	text := "<b>תפריט הקופונים</b>\n\nההצעות האחרונות יופיעו כאן."
 	rows := make([][]tgbotapi.InlineKeyboardButton, 0, len(offers))
 	if len(offers) > 0 {
-		text = "<b>8 ההצעות האחרונות</b>\n\nבחרו קופון ונחזור אליכם להשלמת הרכישה:"
+		text = fmt.Sprintf("<b>ההצעות האחרונות (%d)</b>\n\nבחרו קופון ונחזור אליכם להשלמת הרכישה:", len(offers))
 		for _, offer := range offers {
 			rows = append(rows, tgbotapi.NewInlineKeyboardRow(
-				tgbotapi.NewInlineKeyboardButtonURL(offer.Title, b.offerDeepLink(offer.ID)),
+				tgbotapi.NewInlineKeyboardButtonURL(offerButtonLabel(offer.Text), b.offerDeepLink(offer.ID)),
 			))
 		}
 	}
 	return text, tgbotapi.NewInlineKeyboardMarkup(rows...)
+}
+
+func isMessageNotModified(err error) bool {
+	return err != nil && strings.Contains(strings.ToLower(err.Error()), "message is not modified")
+}
+
+func isMissingMenuMessage(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "message to edit not found") ||
+		strings.Contains(message, "message can't be edited") ||
+		strings.Contains(message, "message_id_invalid")
 }
 
 func (b *Bot) offerDeepLink(offerID string) string {

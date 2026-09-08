@@ -13,6 +13,15 @@ OFFERS_FILE=data/offers.json
 
 The bot must be an administrator in the channel with permission to post, edit, and pin messages. It maintains one pinned menu message and updates its buttons after every new or edited offer post.
 
+For a readable Telegram button, publish each manual offer with the restaurant on the first line and the essential value on the second line, for example:
+
+```text
+קופון חדש ל־Japan Japan
+שובר בשווי 100 ₪ ב־79 ₪ בלבד
+```
+
+The menu renders that as `Japan Japan · 100 ₪ ב־79 ₪` while retaining the full post for the sales handoff.
+
 ## Run
 
 ```powershell
