@@ -60,23 +60,35 @@ func (b *Bot) captureChannelPost(message *tgbotapi.Message) error {
 	if message.MessageID == b.catalog.MenuMessageID() {
 		return nil
 	}
-	text := strings.TrimSpace(message.Text)
-	if text == "" {
-		text = strings.TrimSpace(message.Caption)
-	}
-	if text == "" {
+	caption, isOffer := captionedPhotoOffer(message)
+	if !isOffer {
+		removed, err := b.catalog.RemoveBySourceMessageID(message.MessageID)
+		if err != nil {
+			return err
+		}
+		if removed {
+			return b.syncChannelMenu()
+		}
 		return nil
 	}
 	published := time.Unix(int64(message.Date), 0)
 	if message.Date == 0 {
 		published = time.Now()
 	}
-	offer, duplicate, err := b.catalog.Add(text, message.MessageID, published)
+	offer, duplicate, err := b.catalog.Add(caption, message.MessageID, published)
 	if err != nil {
 		return err
 	}
 	b.logger.Info("captured channel offer", "offer_id", offer.ID, "title", offer.Title, "duplicate_refreshed", duplicate)
 	return b.syncChannelMenu()
+}
+
+func captionedPhotoOffer(message *tgbotapi.Message) (string, bool) {
+	if message == nil || len(message.Photo) == 0 {
+		return "", false
+	}
+	caption := strings.TrimSpace(message.Caption)
+	return caption, caption != ""
 }
 
 func (b *Bot) syncChannelMenu() error {

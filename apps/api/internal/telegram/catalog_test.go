@@ -44,7 +44,7 @@ func TestCatalogRefreshesDuplicateURL(t *testing.T) {
 	if err != nil || !duplicate {
 		t.Fatalf("expected duplicate refresh: duplicate=%v err=%v", duplicate, err)
 	}
-	if first.ID != second.ID || len(catalog.List()) != 1 || catalog.List()[0].Title != "Pizza Place!" {
+	if first.ID != second.ID || len(catalog.List()) != 1 || catalog.List()[0].Title != "Pizza Place · 50% OFF" {
 		t.Fatalf("duplicate was not refreshed: %#v", catalog.List())
 	}
 }
@@ -82,7 +82,7 @@ func TestOfferButtonLabel(t *testing.T) {
 		{
 			name: "restaurant and voucher price",
 			text: "🍣 קופון חדש ל־Japan Japan\nשובר בשווי 100 ₪ ב־79 ₪ בלבד — חיסכון של 21 ₪ 🎉\nלמימוש חד-פעמי",
-			want: "Japan Japan · 100 ₪ ב־79 ₪",
+			want: "Japan Japan · שובר 100 ₪ ב־79 ₪",
 		},
 		{name: "percentage", text: "מבצע ב־Burger Bar\n25% הנחה על כל התפריט", want: "Burger Bar · 25% הנחה על כל התפריט"},
 		{name: "one plus one", text: "דיל ב־Sushi House\n1+1 על כל הרולים", want: "Sushi House · 1+1 על כל הרולים"},
@@ -98,6 +98,34 @@ func TestOfferButtonLabel(t *testing.T) {
 				t.Fatalf("label is too long: %q", got)
 			}
 		})
+	}
+}
+
+func TestOfferButtonLabelFindsOfferBeforeRestaurant(t *testing.T) {
+	got := offerButtonLabel("שובר בשווי 100 ₪ ב־79 ₪ בלבד\nJapan Japan")
+	if got != "Japan Japan · שובר 100 ₪ ב־79 ₪" {
+		t.Fatalf("unexpected reverse-order label: %q", got)
+	}
+}
+
+func TestCatalogTitleContainsOfferTypeFromCaption(t *testing.T) {
+	catalog, err := NewCatalog(filepath.Join(t.TempDir(), "offers.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	offer, _, err := catalog.Add("🍣 קופון חדש ל־Japan Japan\nשובר בשווי 100 ₪ ב־79 ₪ בלבד", 4, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if offer.Title != "Japan Japan · שובר 100 ₪ ב־79 ₪" {
+		t.Fatalf("offer title omitted its type: %q", offer.Title)
+	}
+}
+
+func TestOfferButtonLabelIncludesSpecificOfferType(t *testing.T) {
+	got := offerButtonLabel("Cafe Morning\nארוחת בוקר זוגית ב־99 ₪ בלבד")
+	if got != "Cafe Morning · ארוחת בוקר זוגית ב־99 ₪" {
+		t.Fatalf("unexpected specific-offer label: %q", got)
 	}
 }
 
@@ -130,6 +158,21 @@ func TestCatalogPersists(t *testing.T) {
 	}
 }
 
+func TestCatalogRemovesOfferBySourceMessageID(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "offers.json")
+	catalog, _ := NewCatalog(path)
+	_, _, _ = catalog.Add("Pizza Place\n1+1 pizza", 7, time.Now())
+
+	removed, err := catalog.RemoveBySourceMessageID(7)
+	if err != nil || !removed || len(catalog.List()) != 0 {
+		t.Fatalf("expected offer removal, removed=%v err=%v offers=%#v", removed, err, catalog.List())
+	}
+	reloaded, err := NewCatalog(path)
+	if err != nil || len(reloaded.List()) != 0 {
+		t.Fatalf("expected removal to persist, err=%v offers=%#v", err, reloaded.List())
+	}
+}
+
 func TestChannelDirectLinkIncludesDirectDestinationAndDraft(t *testing.T) {
 	offer := Offer{Text: "קופון חדש ל־Japan Japan\nשובר בשווי 100 ₪ ב־79 ₪ בלבד"}
 	got := channelDirectLink("@KuponFastTest", offer)
@@ -143,7 +186,7 @@ func TestChannelDirectLinkIncludesDirectDestinationAndDraft(t *testing.T) {
 	if _, ok := parsed.Query()["direct"]; !ok {
 		t.Fatalf("missing direct flag: %q", got)
 	}
-	wantDraft := "היי, אני מעוניין/ת בקופון: Japan Japan · 100 ₪ ב־79 ₪"
+	wantDraft := "היי, אני מעוניין/ת בקופון: Japan Japan · שובר 100 ₪ ב־79 ₪"
 	if parsed.Query().Get("text") != wantDraft {
 		t.Fatalf("unexpected draft: %q", parsed.Query().Get("text"))
 	}
