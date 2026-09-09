@@ -27,7 +27,7 @@ func main() {
 		logger.Error("failed to load offer catalog", "error", err)
 		os.Exit(1)
 	}
-	bot, err := telegram.NewBot(logger, cfg.TelegramBotToken, cfg.TelegramChannelID, cfg.TelegramAdminUserIDs, catalog)
+	bot, err := telegram.NewBot(logger, cfg.TelegramBotToken, cfg.TelegramChannelID, catalog)
 	if err != nil {
 		logger.Error("failed to initialize Telegram bot", "error", err)
 		os.Exit(1)
@@ -40,7 +40,14 @@ func main() {
 		_, _ = w.Write([]byte(`{"status":"ok"}`))
 	})
 
-	server := &http.Server{Addr: ":" + cfg.Port, Handler: mux, ReadHeaderTimeout: 5 * time.Second}
+	server := &http.Server{
+		Addr:              ":" + cfg.Port,
+		Handler:           mux,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		WriteTimeout:      20 * time.Second,
+		IdleTimeout:       60 * time.Second,
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	go func() {

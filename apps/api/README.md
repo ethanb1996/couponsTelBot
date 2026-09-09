@@ -7,11 +7,12 @@ PORT=8080
 TELEGRAM_BOT_TOKEN=
 TELEGRAM_WEBHOOK_SECRET=
 TELEGRAM_CHANNEL_ID=-1004448924956
-TELEGRAM_ADMIN_USER_IDS=123456789
 OFFERS_FILE=data/offers.json
 ```
 
-The bot must be an administrator in the channel with permission to post, edit, and pin messages. It maintains one pinned menu message and updates its buttons after every new or edited offer post.
+The bot must be an administrator in a public channel with permission to post, edit, and pin messages. The public username is read directly from Telegram and is required for channel Direct Messages links. The bot maintains one pinned menu message and updates its buttons after every new or edited offer post.
+
+Because the channel is public, every channel post and the pinned menu are public content. Keep credentials only in the ignored local `.env`; never place tokens, webhook secrets, customer data, or internal notes in an offer post. The webhook rejects requests without Telegram's secret-token header and accepts only channel post updates.
 
 For a readable Telegram button, publish each manual offer with the restaurant on the first line and the essential value on the second line, for example:
 
@@ -20,7 +21,7 @@ For a readable Telegram button, publish each manual offer with the restaurant on
 שובר בשווי 100 ₪ ב־79 ₪ בלבד
 ```
 
-The menu renders that as `Japan Japan · 100 ₪ ב־79 ₪` while retaining the full post for the sales handoff.
+The menu renders that as `Japan Japan · 100 ₪ ב־79 ₪`. Clicking it opens the channel's Direct Messages chat with `היי, אני מעוניין/ת בקופון: Japan Japan · 100 ₪ ב־79 ₪` prepared in the composer. The user reviews and sends it; the menu bot does not conduct the sale.
 
 ## Run
 
@@ -36,8 +37,6 @@ ngrok http 8080
 
 Register the HTTPS ngrok URL as the Telegram webhook and include these update types:
 
-- `message`
-- `callback_query`
 - `channel_post`
 - `edited_channel_post`
 

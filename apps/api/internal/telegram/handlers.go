@@ -2,6 +2,7 @@ package telegram
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -29,7 +30,8 @@ func (h *WebhookHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
 		return
 	}
-	if r.Header.Get("X-Telegram-Bot-Api-Secret-Token") != h.secret {
+	providedSecret := r.Header.Get("X-Telegram-Bot-Api-Secret-Token")
+	if subtle.ConstantTimeCompare([]byte(providedSecret), []byte(h.secret)) != 1 {
 		http.Error(w, http.StatusText(http.StatusUnauthorized), http.StatusUnauthorized)
 		return
 	}

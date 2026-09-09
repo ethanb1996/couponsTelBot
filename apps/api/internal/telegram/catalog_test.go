@@ -2,6 +2,7 @@ package telegram
 
 import (
 	"fmt"
+	"net/url"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -129,12 +130,22 @@ func TestCatalogPersists(t *testing.T) {
 	}
 }
 
-func TestParseOfferStartPayload(t *testing.T) {
-	if id, ok := parseOfferStartPayload("offer_abc123"); !ok || id != "abc123" {
-		t.Fatalf("unexpected payload parse: id=%q ok=%v", id, ok)
+func TestChannelDirectLinkIncludesDirectDestinationAndDraft(t *testing.T) {
+	offer := Offer{Text: "קופון חדש ל־Japan Japan\nשובר בשווי 100 ₪ ב־79 ₪ בלבד"}
+	got := channelDirectLink("@KuponFastTest", offer)
+	parsed, err := url.Parse(got)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if _, ok := parseOfferStartPayload("other_abc123"); ok {
-		t.Fatal("expected unrelated payload to be rejected")
+	if parsed.Host != "t.me" || parsed.Path != "/KuponFastTest" {
+		t.Fatalf("unexpected direct destination: %q", got)
+	}
+	if _, ok := parsed.Query()["direct"]; !ok {
+		t.Fatalf("missing direct flag: %q", got)
+	}
+	wantDraft := "היי, אני מעוניין/ת בקופון: Japan Japan · 100 ₪ ב־79 ₪"
+	if parsed.Query().Get("text") != wantDraft {
+		t.Fatalf("unexpected draft: %q", parsed.Query().Get("text"))
 	}
 }
 

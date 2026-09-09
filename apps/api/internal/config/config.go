@@ -15,7 +15,6 @@ type Config struct {
 	TelegramBotToken      string
 	TelegramWebhookSecret string
 	TelegramChannelID     int64
-	TelegramAdminUserIDs  []int64
 	OffersFile            string
 }
 
@@ -28,17 +27,11 @@ func Load() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
-	adminIDs, err := int64List("TELEGRAM_ADMIN_USER_IDS")
-	if err != nil {
-		return Config{}, err
-	}
-
 	cfg := Config{
 		Port:                  envDefault("PORT", "8080"),
 		TelegramBotToken:      strings.TrimSpace(os.Getenv("TELEGRAM_BOT_TOKEN")),
 		TelegramWebhookSecret: strings.TrimSpace(os.Getenv("TELEGRAM_WEBHOOK_SECRET")),
 		TelegramChannelID:     channelID,
-		TelegramAdminUserIDs:  adminIDs,
 		OffersFile:            envDefault("OFFERS_FILE", filepath.Join("data", "offers.json")),
 	}
 
@@ -48,9 +41,6 @@ func Load() (Config, error) {
 	}
 	if cfg.TelegramWebhookSecret == "" {
 		missing = append(missing, "TELEGRAM_WEBHOOK_SECRET")
-	}
-	if len(cfg.TelegramAdminUserIDs) == 0 {
-		missing = append(missing, "TELEGRAM_ADMIN_USER_IDS")
 	}
 	if len(missing) > 0 {
 		return Config{}, fmt.Errorf("missing required environment variables: %s", strings.Join(missing, ", "))
@@ -104,20 +94,4 @@ func requiredInt64(key string) (int64, error) {
 		return 0, fmt.Errorf("%s must be a non-zero integer", key)
 	}
 	return parsed, nil
-}
-
-func int64List(key string) ([]int64, error) {
-	value := strings.TrimSpace(os.Getenv(key))
-	if value == "" {
-		return nil, nil
-	}
-	var result []int64
-	for _, part := range strings.Split(value, ",") {
-		parsed, err := strconv.ParseInt(strings.TrimSpace(part), 10, 64)
-		if err != nil || parsed <= 0 {
-			return nil, fmt.Errorf("%s must contain comma-separated positive integers", key)
-		}
-		result = append(result, parsed)
-	}
-	return result, nil
 }

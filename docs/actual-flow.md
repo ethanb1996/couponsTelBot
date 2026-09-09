@@ -10,9 +10,7 @@
 6. Only the latest eight offers remain in `data/offers.json`.
 7. Buttons use a compact `restaurant · essential offer` label capped at 40 characters so the value remains visible on narrow screens.
 8. The bot creates or edits one channel menu message, keeps its Telegram message id locally, and pins it.
-9. Channel menu buttons open an offer-specific private chat with the bot.
-10. `/start` and `/offers` also render one private-chat button per offer.
-11. Selecting an offer sends a pre-written interest confirmation to the buyer.
-12. Every configured Telegram admin receives the selected offer and a link to the buyer.
+9. Each button opens the public channel's Direct Messages chat and prepares `היי, אני מעוניין/ת בקופון: <restaurant · essential offer>` in the composer.
+10. The user reviews and sends the message directly to the channel; the bot does not receive or relay buyer conversations.
 
 No sale, payment, coupon delivery, or redemption state is managed by the bot.
